@@ -71,6 +71,9 @@ const uint8_t LOOP_TIME = 200; //5hz
 uint32_t lastTime = LOOP_TIME;
 uint32_t currentTime = LOOP_TIME;
 
+//Switches
+uint8_t  workSwitch = 0, steerSwitch = 1, switchByte = 0;
+
 // Переменные для проверки связи
 uint8_t watchdogTimer = 0; // Таймер для проверки связи с AOG
 uint8_t serialResetTimer = 0; // Таймер для сброса буфера последовательного порта, если он переполнен
@@ -299,7 +302,10 @@ void loop() {
         SerialTeensy.read(); //пропускаем
         SerialTeensy.read(); //пропускаем
         SerialTeensy.read(); //пропускаем
-        SerialTeensy.read(); //пропускаем       
+        switchByte = SerialTeensy.read(); //значение кнопок автопилота
+        // Распаковка битов 
+        workSwitch = switchByte & 1; // Бит 0
+        steerSwitch = (switchByte >> 1) & 1; // Бит 1               
         SerialTeensy.read(); //пропускаем        
         SerialTeensy.read(); // Пропускаем CRC (байт 13)       
         // Выводим отладочную информацию        
@@ -467,8 +473,10 @@ void handleStop() { // функция управления стопом
         powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
         StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп
     } else {
+        if (StopdownTimer == 0) {
         StopupTimer= triggerPin(HYDRAULIC_GEOSTOP_UP, !hydConfig.isRelayActiveHigh, 3); // Деактивировать стоп
-    }    
+    }
+  }     
 }
 void handleButtons() {  
   bool gasUpPressed = (digitalRead(GAS_UP_PIN) == LOW);
