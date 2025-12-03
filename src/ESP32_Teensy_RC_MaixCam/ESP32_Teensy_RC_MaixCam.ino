@@ -93,6 +93,7 @@ uint8_t pin[] = { 1,2,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 };
 //The variables used for storage
 uint8_t relayHi = 0;
 uint8_t relayLo = 0;
+uint8_t tram = 0; // переменная XTE
 uint8_t tramline = 0; // Переменная для хранения состояния траектории
 uint8_t uTurn = 0; // Переменная для хранения состояния разворота
 uint8_t hydLift = 0; // Переменная для хранения состояния гидравлического подъема
@@ -215,7 +216,20 @@ void setup()
 
 void loop() {
 
-   currentTime = millis();
+    static uint32_t lastGeoStopUpdate = millis(); // Инициализируем текущим временем
+    currentTime = millis();
+    if (currentTime - lastTime >= LOOP_TIME)    {
+        lastTime = currentTime;    
+    // Проверяем время с последнего обновления геостопа
+    if (currentTime - lastGeoStopUpdate > 2000) { // 2 секунды
+        geoStop = 1; // Аварийный стоп - нет данных от AgOpenGPS       
+    }        
+    if (serialResetTimer++ > 20) {
+        while (SerialTeensy.available() > 0) SerialTeensy.read();
+        serialResetTimer = 0;
+    }
+    }
+   /*currentTime = millis();
    if (currentTime - lastTime >= LOOP_TIME)
       {
           lastTime = currentTime;
@@ -231,7 +245,7 @@ void loop() {
            if (watchdogTimer > 10) geoStop = true; //значение в еденицах времени до срабатывания реле,  если связи с agopengps нет, то стоп
           // Serial.print("таймер: ");
           //Serial.println(geoStop);           
-        }  
+        }*/  
 
    if (SerialTeensy.available() > 4 && !isHeaderFound && !isPGNFound) {
         uint8_t temp = SerialTeensy.read();
@@ -255,7 +269,8 @@ void loop() {
             uTurn = SerialTeensy.read();
             //Serial.print("uTurn: ");
             //Serial.println(uTurn);
-            gpsSpeed = (float)SerialTeensy.read();
+            gpsSpeed = (float)SerialTeensy.read();            
+            lastGeoStopUpdate = millis();// ОБНОВЛЯЕМ время последнего получения
             //Serial.print(" gpsSpeed: ");
             //Serial.println( gpsSpeed);
             hydLift = SerialTeensy.read();
@@ -289,7 +304,21 @@ void loop() {
             SerialTeensy.read(); // Пропускаем CRC
             EEPROM.put(6, hydConfig);
             EEPROM.commit();
-            resetFunc(); // Перезагрузка            
+            resetFunc(); // Перезагрузка
+
+        /*} else if (pgn == 254 && byte2 == 127) { // ОБРАБОТКА PGN 254 (0xFE с byte2 = 127)        
+        SerialTeensy.read(); //пропускаем
+        SerialTeensy.read(); //пропускаем          
+        SerialTeensy.read(); //пропускаем
+        SerialTeensy.read(); //пропускаем
+        SerialTeensy.read(); //пропускаем
+        tram = SerialTeensy.read(); //читаем XTE
+        Serial.print(" tram: ");
+        Serial.println( tram);
+        SerialTeensy.read(); //пропускаем               
+        SerialTeensy.read(); //пропускаем        
+        SerialTeensy.read(); // Пропускаем CRC (байт 13)*/
+
         } else if (pgn == 0xFD && byte2 == 126) { // ОБРАБОТКА PGN 253 (0xFD с byte2 = 126)
         // PGN 253 - From AutoSteer (8 байт данных)
         // Структура: ActualSteerAngle*100 (2 байта), Heading (2 байта), Roll (2 байта), SwitchByte, pwmDisplay        
