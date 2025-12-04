@@ -336,9 +336,9 @@ void loop() {
         workSwitch = switchByte & 1; // Бит 0
         steerSwitch = (switchByte >> 1) & 1; // Бит 1               
         SerialTeensy.read(); //пропускаем        
-        SerialTeensy.read(); // Пропускаем CRC (байт 13)       
-        // Выводим отладочную информацию        
-        //Serial.print(actualSteerAngle);  
+        SerialTeensy.read(); // Пропускаем CRC (байт 13)              
+        //Serial.print(actualSteerAngle);
+        //Serial.println();
     }    
         watchdogTimer = 0; // Сброс watchdog
         serialResetTimer = 0; // Сброс таймера
