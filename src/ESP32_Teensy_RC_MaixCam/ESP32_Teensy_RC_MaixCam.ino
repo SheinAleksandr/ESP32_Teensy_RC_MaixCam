@@ -306,7 +306,7 @@ void loop() {
             EEPROM.commit();
             resetFunc(); // Перезагрузка
 
-        /*} else if (pgn == 254 && byte2 == 127) { // ОБРАБОТКА PGN 254 (0xFE с byte2 = 127)        
+        } else if (pgn == 254 && byte2 == 127) { // ОБРАБОТКА PGN 254 (0xFE с byte2 = 127)        
         SerialTeensy.read(); //пропускаем
         SerialTeensy.read(); //пропускаем          
         SerialTeensy.read(); //пропускаем
@@ -317,7 +317,7 @@ void loop() {
         Serial.println( tram);
         SerialTeensy.read(); //пропускаем               
         SerialTeensy.read(); //пропускаем        
-        SerialTeensy.read(); // Пропускаем CRC (байт 13)*/
+        SerialTeensy.read(); // Пропускаем CRC (байт 13)
 
         } else if (pgn == 0xFD && byte2 == 126) { // ОБРАБОТКА PGN 253 (0xFD с byte2 = 126)
         // PGN 253 - From AutoSteer (8 байт данных)
@@ -473,7 +473,7 @@ void handleHydraulicRC() {
  void handlePark() {  // функция управления  сцеплением  
     if (channel4Value > 1600) {
         // Плавное выжимание сцепления (пропорционально значению channel4Value)
-        int pwmValue = map(channel4Value, 1600, 2050, 0, 255); // Преобразуем значение в диапазон 0–255
+        int pwmValue = map(channel4Value, 1600, 2100, 0, 255); // Преобразуем значение в диапазон 0–255
         analogWrite(HYDRAULIC_PARK_UP, pwmValue); // Плавное выжимание
         analogWrite(HYDRAULIC_PARK_DOWN, 0); // Отключаем отпускание
     }
@@ -493,6 +493,12 @@ void handleHydraulicRC() {
 void handleStop() { // функция управления стопом  
   if (StopupTimer  && millis() > StopupTimer )  StopupTimer  = triggerPin(HYDRAULIC_GEOSTOP_UP, hydConfig.isRelayActiveHigh, 0);
   if (StopdownTimer  && millis() > StopdownTimer )  StopdownTimer  = triggerPin(HYDRAULIC_GEOSTOP_DOWN, hydConfig.isRelayActiveHigh, 0);
+
+  if (StopdownTimer == 0 && StopupTimer == 0)
+        if (channel6Value > 1500) { // проверяем    канал 6 
+        powerdownTimer= triggerPin(HYDRAULIC_POWER_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать газ              
+        StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп        
+        } 
   
   if (geoStop == geoStopPrev) return; // если состояние не изменилось, выходим
       geoStopPrev = geoStop; // обновляем предыдущее значение 
@@ -529,7 +535,7 @@ void handleButtons() {
     if (stopDownPressed != lastStopDownState)  { // Проверяем изменение состояния
         lastStopDownState = stopDownPressed; // Обновляем состояние
     
-    if ((stopDownPressed || channel6Value > 1500 ) && StopupTimer == 0) {
+    if (stopDownPressed  && StopupTimer == 0) {
             StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп            
         } 
     else if (!stopDownPressed  && StopdownTimer == 0) {               
