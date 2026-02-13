@@ -449,7 +449,7 @@ void setup() {
              powerdownTimer = millis() + (hydConfig.user1 * 100); // Установить таймер отключения
              } else {
                  setGasPin(HYDRAULIC_POWER_UP, true); // Активировать газ
-                 powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
+                 powerupTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
              }    
  }
  void handlePark() {  // функция управления  сцеплением  
