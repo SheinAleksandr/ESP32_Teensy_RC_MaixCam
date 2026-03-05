@@ -51,6 +51,7 @@ int channel5Value = 0; // Глобальная переменная для хр�
 int channel8Value = 0; // Глобальная переменная для хранения значения канала 8 опускание
 int channel7Value = 0; // Глобальная переменная для хранения значения канала 7  сцепление
 int channel9Value = 0; // Инициализация переменной включения руля фпв управление
+int channel10Value = 0; // Выбор FPV-камеры 1/2/3
 
 struct Config {
         uint8_t raiseTime = 2;
@@ -128,10 +129,21 @@ const int HYDRAULIC_PARK_DOWN = 19; // сцепление -
 const int GAS_UP_PIN = 35;    // Газ +  поддянуть 10 ком к 3,3в
 const int GAS_DOWN_PIN = 34;  // Газ -  поддянуть 10 ком к 3,3в
 const int STOP_DOWN_PIN = 18; // Стоп вниз
+const int FPV_SWITCH_PIN = 27; // Вход коммутатора камер (RC PWM)
+
+const bool FPV_SWITCH_ACTIVE_HIGH = true;
+const uint32_t FPV_SWITCH_PERIOD_US = 20000UL; // 50Hz
+uint8_t fpvCurrentCamera = 1;
+uint8_t fpvTargetCamera = 1;
+uint16_t fpvPulseUs = 1000;
+uint32_t fpvPwmCycleStartUs = 0;
+bool fpvPwmHighActive = false;
 
 //reset function
 void(* resetFunc) (void) = 0;
-  
+
+void handleFpvCameraSwitch();
+void updateFpvSwitchPwm();
 
 void setup() {
      delay(250); // время для стабилизации питания
@@ -170,6 +182,9 @@ void setup() {
      pinMode(GAS_UP_PIN, INPUT); // поддянуть 10 ком к 3,3в
      pinMode(GAS_DOWN_PIN, INPUT); // поддянуть 10 ком к 3,3в
      pinMode(STOP_DOWN_PIN, INPUT); //развязка оптопарой  масса-кнопка-катод-анод-220ом-5,5в; эмитер-масса; пин-коллектор:4,7ком-3,3в
+     pinMode(FPV_SWITCH_PIN, OUTPUT);
+     digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
+     fpvPwmCycleStartUs = micros();
 
      digitalWrite(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh);
      digitalWrite(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh);    
@@ -358,7 +373,10 @@ void setup() {
      channel7Value = crsf.getChannel(7); // сцепление фикс
      channel8Value = crsf.getChannel(8); // обновление значения на канале 8 вниз    
      channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление             
-     // Обработка ВСЕХ функций управления
+     channel10Value = crsf.getChannel(10); // выбор FPV камеры
+      // Обработка ВСЕХ функций управления
+      handleFpvCameraSwitch();
+      updateFpvSwitchPwm();
      handleButtons();                   // Кнопки + мощность
      handlePowerActuatorBySpeedPID();   // ПИД регулятор
      handleUTurn();                     // Разворот
@@ -588,6 +606,36 @@ void setup() {
      udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
      udp.endPacket();   
      }
+ void handleFpvCameraSwitch() {
+     if (channel10Value < 1300) fpvTargetCamera = 1;
+     else if (channel10Value > 1700) fpvTargetCamera = 3;
+     else fpvTargetCamera = 2;
+
+     if (fpvTargetCamera != fpvCurrentCamera) {
+         fpvCurrentCamera = fpvTargetCamera;
+         if (fpvCurrentCamera == 1) fpvPulseUs = 1000;
+         else if (fpvCurrentCamera == 2) fpvPulseUs = 1500;
+         else fpvPulseUs = 2000;
+     }
+ }
+
+ void updateFpvSwitchPwm() {
+     uint32_t nowUs = micros();
+     uint32_t elapsed = nowUs - fpvPwmCycleStartUs;
+
+     if (!fpvPwmHighActive && elapsed >= FPV_SWITCH_PERIOD_US) {
+         fpvPwmCycleStartUs = nowUs;
+         digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? HIGH : LOW);
+         fpvPwmHighActive = true;
+         return;
+     }
+
+     if (fpvPwmHighActive && elapsed >= fpvPulseUs) {
+         digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
+         fpvPwmHighActive = false;
+     }
+ }
+
  // Method to send channels based on CRSF instance
  void sendChannels(AlfredoCRSF& crsf) {
      const crsf_channels_t* channels_ptr = crsf.getChannelsPacked();
