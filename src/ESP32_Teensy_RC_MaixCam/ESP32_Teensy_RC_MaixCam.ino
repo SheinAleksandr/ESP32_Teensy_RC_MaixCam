@@ -303,8 +303,8 @@ void setup() {
                  SerialTeensy.read(); //пропускаем
                  SerialTeensy.read(); //пропускаем
                  tram = SerialTeensy.read(); //читаем XTE
-                 Serial.print(" tram: ");
-                 Serial.println( tram);
+                 //Serial.print(" tram: ");
+                 //Serial.println( tram);
                  SerialTeensy.read(); //пропускаем               
                  SerialTeensy.read(); //пропускаем        
                  SerialTeensy.read(); // Пропускаем CRC (байт 13)
