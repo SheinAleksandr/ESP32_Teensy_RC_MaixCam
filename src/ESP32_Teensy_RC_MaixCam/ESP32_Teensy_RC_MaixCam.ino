@@ -34,11 +34,6 @@ byte SerialTeensyRX = 16;  // Пин RX ESP 16
 byte SerialTeensyTX = 17;  // Пин TX ESP 17
 AlfredoCRSF Teensy;
 
-//HardwareSerial SerialOut(0); // Используем Serial
-//byte PIN_RX_OUT = 3;  // Пин RX ESP 3 
-//byte PIN_TX_OUT = 1;  // Пин TX ESP 1
-//AlfredoCRSF Out;
-
 HardwareSerial SerialCRSF(1); // 1 - это UART1 на ESP32
 byte CRSF_RX = 15;  // Пин RX для CRSF (15)
 byte CRSF_TX = 4;   // Пин TX для CRSF (4)
@@ -65,7 +60,7 @@ struct Config {
 
     };   Config hydConfig;   //8 bytes
 
-int16_t temp, EEread = 0; // temp - временная переменная, EEread - значение из EEPROM
+int16_t EEread = 0; // EEread - значение из EEPROM
 
 const uint8_t LOOP_TIME = 200; //5hz
 uint32_t lastTime = LOOP_TIME;
@@ -83,12 +78,8 @@ bool isPGNFound = false; // Флаг, указывающий, найден ли 
 bool isHeaderFound = false; // Флаг, указывающий, найден ли заголовок
 uint8_t pgn = 0; // Идентификатор PGN
 uint8_t dataLength = 0; // Длина данных
-uint8_t idx = 0; // Индекс для перебора данных
 uint8_t byte2 = 0; //  ДОБАВИТЬ эту переменную
 int16_t tempHeader = 0; // Временная переменная для хранения заголовка
-
-//24 possible pins assigned to these functions
-uint8_t pin[] = { 1,2,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 };
  
 //The variables used for storage
 uint8_t relayHi = 0;
@@ -107,11 +98,8 @@ uint32_t raiseTimer = 0; // Таймер для подъема
 uint32_t lowerTimer = 0; // Таймер для опускания
 uint32_t powerupTimer = 0; // Таймер для мощности+
 uint32_t powerdownTimer = 0; // Таймер для мощности-
-uint32_t parkupTimer = 0; // Таймер для сцепления+
-uint32_t parkdownTimer = 0; // Таймер для сцепления-
 uint32_t StopupTimer = 0; // Таймер для стоп+
 uint32_t StopdownTimer = 0; // Таймер для стоп-
-int pidPowerValue = 0; // Глобальная переменная для значения ПИД-регулятора
     
 // Определяем пины для управления
 const int HYDRAULIC_GEOSTOP_UP =23 ; // Пин для гео-стопа +
@@ -131,20 +119,14 @@ const int FPV_SWITCH_PIN = 27; // Вход коммутатора камер (RC
 
 const bool FPV_SWITCH_ACTIVE_HIGH = true;
 const uint32_t FPV_SWITCH_PERIOD_US = 20000UL; // 50Hz
-const bool FPV_PIN_DEBUG = false; // временный вывод состояния pin 27 в Serial Monitor
-const uint32_t FPV_PIN_DEBUG_INTERVAL_MS = 50;
 uint8_t fpvCurrentCamera = 1;
 uint8_t fpvTargetCamera = 1;
 uint16_t fpvPulseUs = 1000;
 uint32_t fpvPwmCycleStartUs = 0;
 bool fpvPwmHighActive = false;
-uint32_t fpvDebugLastMs = 0;
 
 //reset function
 void(* resetFunc) (void) = 0;
-
-void handleFpvCameraSwitch();
-void updateFpvSwitchPwm();
 
 void setup() {
      delay(250); // время для стабилизации питания
@@ -196,12 +178,10 @@ void setup() {
   
      SerialCRSF.begin(CRSF_BAUDRATE, SERIAL_8N1, CRSF_RX, CRSF_TX);
      delay(1000); 
-     SerialTeensy.begin(CRSF_BAUDRATE, SERIAL_8N1, SerialTeensyRX, SerialTeensyTX);// 115200
-     //SerialOut.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_RX_OUT, PIN_TX_OUT);
+     SerialTeensy.begin(CRSF_BAUDRATE, SERIAL_8N1, SerialTeensyRX, SerialTeensyTX);// 115200     
      delay(1000);
      crsf.begin(SerialCRSF);
-     Teensy.begin(SerialTeensy); // Инициализация последовательного порта CRSF
-     //Out.begin(SerialOut);
+     Teensy.begin(SerialTeensy); // Инициализация последовательного порта CRSF     
 
      // Вывод значений из структуры hydConfig в монитор последовательного порта
      Serial.println("Values from EEPROM:");
