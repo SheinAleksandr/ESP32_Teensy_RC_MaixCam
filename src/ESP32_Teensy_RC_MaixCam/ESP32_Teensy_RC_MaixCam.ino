@@ -380,7 +380,13 @@ void setup() {
      if (crsf.isLinkUp() && channel9Value > 1500) {      
          sendChannels(crsf);
          }
-     // Обработка ВСЕХ функций управления
+    // Обработка ВСЕХ функций управления    
+    handleButtons();                   // Кнопки + мощность
+    controlHydraulic();               // RC управление  
+    handleStop();                      // Стоп   
+    handleUTurn();                     // Разворот
+    handlePowerActuatorBySpeedPID();   // ПИД регулятор    
+    handlePark();                      // Сцепление   
     handleFpvCameraSwitch();
     updateFpvSwitchPwm();
      if (FPV_PIN_DEBUG) {
@@ -393,13 +399,7 @@ void setup() {
              Serial.print('\t');
              Serial.println(channel7Value);
              }
-         }
-    handleButtons();                   // Кнопки + мощность
-    controlHydraulic();               // RC управление  
-    handleStop();                      // Стоп   
-    handleUTurn();                     // Разворот
-    handlePowerActuatorBySpeedPID();   // ПИД регулятор    
-    handlePark();                      // Сцепление    
+         } 
  }
 
  void setGasPin(int pin, bool state) { // Для пинов, управляемых через ШИМ (газ)
@@ -410,11 +410,11 @@ void setup() {
              }
      }    
 
- int triggerPin(int pin, bool state, int timer) {    
-     digitalWrite(pin, state);
-     if(timer) return millis() + (1000 * timer);
-     return 0;
-     }    
+ uint32_t triggerPin(int pin, bool state, uint32_t timer) {    
+          digitalWrite(pin, state);
+          if (timer) return millis() + (1000UL * timer);
+          return 0;
+        }    
 
  void controlHydraulic() {  // функция управления  гидравликой
     if (raiseTimer  && millis() > raiseTimer )  raiseTimer  = triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
