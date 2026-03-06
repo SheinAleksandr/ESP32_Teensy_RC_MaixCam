@@ -457,6 +457,8 @@ void setup() {
     if (raiseTimer || lowerTimer) return;
     // 6. Если AOG не просит подъем/опускание — ничего не делаем
     if (hydLift == 0) {
+        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
         hydLiftPrev = 0;
         return;
     }
