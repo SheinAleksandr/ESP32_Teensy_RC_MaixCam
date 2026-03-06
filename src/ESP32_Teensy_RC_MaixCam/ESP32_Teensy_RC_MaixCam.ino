@@ -49,9 +49,8 @@ int channel4Value = 0; // Глобальная переменная для хр�
 int channel6Value = 0; // Глобальная переменная для хранения значения канала 6 геозона
 int channel5Value = 0; // Глобальная переменная для хранения значения канала 5 подьем
 int channel8Value = 0; // Глобальная переменная для хранения значения канала 8 опускание
-int channel7Value = 0; // Глобальная переменная для хранения значения канала 7  сцепление
+int channel7Value = 0; // Глобальная переменная для хранения значения канала 7  Выбор FPV-камеры 1/2/3
 int channel9Value = 0; // Инициализация переменной включения руля фпв управление
-int channel10Value = 0; // Выбор FPV-камеры 1/2/3
 
 struct Config {
         uint8_t raiseTime = 2;
@@ -103,8 +102,7 @@ float gpsSpeed; // Переменная для хранения скорости
 float recordedSpeed; // Переменная для хранения скорости в записанном пути
 uint8_t hydLiftPrev = 3;
 uint8_t uTurnPrev = 0; // Переменная для хранения предыдущего состояния uTurn
-uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния uTurn
-uint16_t channel7ValuePrev = 1600; // Переменная для хранения предыдущего состояния сцепления                                   
+uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния uTurn                          
 uint32_t raiseTimer = 0; // Таймер для подъема
 uint32_t lowerTimer = 0; // Таймер для опускания
 uint32_t powerupTimer = 0; // Таймер для мощности+
@@ -129,15 +127,18 @@ const int HYDRAULIC_PARK_DOWN = 19; // сцепление -
 const int GAS_UP_PIN = 35;    // Газ +  поддянуть 10 ком к 3,3в
 const int GAS_DOWN_PIN = 34;  // Газ -  поддянуть 10 ком к 3,3в
 const int STOP_DOWN_PIN = 18; // Стоп вниз
-const int FPV_SWITCH_PIN = 27; // Вход коммутатора камер (RC PWM)
+const int FPV_SWITCH_PIN = 27; // Вход коммутатора камер (RC PWM) , также можно использовать если нет кан 13 или 14 пин
 
 const bool FPV_SWITCH_ACTIVE_HIGH = true;
 const uint32_t FPV_SWITCH_PERIOD_US = 20000UL; // 50Hz
+const bool FPV_PIN_DEBUG = false; // временный вывод состояния pin 27 в Serial Monitor
+const uint32_t FPV_PIN_DEBUG_INTERVAL_MS = 50;
 uint8_t fpvCurrentCamera = 1;
 uint8_t fpvTargetCamera = 1;
 uint16_t fpvPulseUs = 1000;
 uint32_t fpvPwmCycleStartUs = 0;
 bool fpvPwmHighActive = false;
+uint32_t fpvDebugLastMs = 0;
 
 //reset function
 void(* resetFunc) (void) = 0;
@@ -283,8 +284,8 @@ void setup() {
                  //Serial.println(hydLift);
                  tramline = SerialTeensy.read();
                  geoStop = SerialTeensy.read();
-                 //Serial.print("geoStop: ");
-                 //Serial.println(geoStop);
+                 Serial.print("geoStop: ");
+                 Serial.println(geoStop);
                  recordedSpeed = (float)SerialTeensy.read(); // записанный путь
                  //Serial.print(" recordedSpeed: ");
                  //Serial.println( recordedSpeed);           
@@ -370,13 +371,24 @@ void setup() {
      channel4Value = crsf.getChannel(4); // сцепление
      channel6Value = crsf.getChannel(6); // геостоп
      channel5Value = crsf.getChannel(5); // обновление значения на канале 5 вверх
-     channel7Value = crsf.getChannel(7); // сцепление фикс
+     channel7Value = crsf.getChannel(7); // выбор FPV камеры
      channel8Value = crsf.getChannel(8); // обновление значения на канале 8 вниз    
      channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление             
-     channel10Value = crsf.getChannel(10); // выбор FPV камеры
-      // Обработка ВСЕХ функций управления
-      handleFpvCameraSwitch();
-      updateFpvSwitchPwm();
+
+     // Обработка ВСЕХ функций управления
+     handleFpvCameraSwitch();
+     updateFpvSwitchPwm();
+     if (FPV_PIN_DEBUG) {
+         uint32_t nowMs = millis();
+         if (nowMs - fpvDebugLastMs >= FPV_PIN_DEBUG_INTERVAL_MS) {
+             fpvDebugLastMs = nowMs;
+             Serial.print(digitalRead(FPV_SWITCH_PIN));
+             Serial.print('\t');
+             Serial.print(fpvPulseUs);
+             Serial.print('\t');
+             Serial.println(channel7Value);
+             }
+         }
      handleButtons();                   // Кнопки + мощность
      handlePowerActuatorBySpeedPID();   // ПИД регулятор
      handleUTurn();                     // Разворот
@@ -606,15 +618,27 @@ void setup() {
      udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
      udp.endPacket();   
      }
- void handleFpvCameraSwitch() {
-     if (channel10Value < 1300) fpvTargetCamera = 1;
-     else if (channel10Value > 1700) fpvTargetCamera = 3;
-     else fpvTargetCamera = 2;
-
-     if (fpvTargetCamera != fpvCurrentCamera) {
-         fpvCurrentCamera = fpvTargetCamera;
-         if (fpvCurrentCamera == 1) fpvPulseUs = 1000;
-         else if (fpvCurrentCamera == 2) fpvPulseUs = 1500;
+void handleFpvCameraSwitch() {
+    if (channel7Value < 1300) fpvTargetCamera = 1;
+    else if (channel7Value > 1700) fpvTargetCamera = 3;    
+    // Вариант для 3-го режима (2000+-200): AUTO смена камер по времени.
+    // Чтобы включить:
+    // 1) закомментируй строку: else if (channel7Value > 1700) fpvTargetCamera = 3;
+    // 2) раскомментируй блок ниже.
+    /*else if (channel7Value > 1700) {
+        static uint32_t fpvAutoLastMs = 0;
+        const uint32_t FPV_AUTO_PERIOD_MS = 4000; // 4 секунды на камеру
+        if (millis() - fpvAutoLastMs >= FPV_AUTO_PERIOD_MS) {
+            fpvAutoLastMs = millis();
+            fpvTargetCamera++;
+            if (fpvTargetCamera > 3) fpvTargetCamera = 1;
+        }
+    }*/
+    else fpvTargetCamera = 2;
+    if (fpvTargetCamera != fpvCurrentCamera) {
+        fpvCurrentCamera = fpvTargetCamera;
+        if (fpvCurrentCamera == 1) fpvPulseUs = 1000;
+        else if (fpvCurrentCamera == 2) fpvPulseUs = 1500;
          else fpvPulseUs = 2000;
      }
  }
