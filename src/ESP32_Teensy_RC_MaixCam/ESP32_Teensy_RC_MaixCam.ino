@@ -567,7 +567,7 @@ void setup() {
      }
  void controlMaixCam() {
     bool wifiClientPresent = (WiFi.softAPgetStationNum() > 0);    
-    int packetSize = udp.parsePacket(); // Прием UDP от MaixCam
+    int packetSize = udp.parsePacket(); // Приём UDP от камеры
     if (packetSize > 0) {
         char packetBuffer[255];
         int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
@@ -576,43 +576,41 @@ void setup() {
             processObstacleData(packetBuffer);
             lastMaixPacketTime = millis();
         }
-    }    
-    maixcamOnline = wifiClientPresent && // Камера считается онлайн, если есть клиент Wi-Fi и недавно приходил UDP пакет
+    }   
+    maixcamOnline = wifiClientPresent &&  // проверка таймаута камеры
                     (millis() - lastMaixPacketTime <= MAIXCAM_TIMEOUT_MS);    
-    if (maixcamOnline && (millis() - lastAngleSend >= angleSendInterval)) { // Отправка угла только если камера онлайн
-        sendSteeringAngle();
+    if (maixcamOnline && millis() - lastAngleSend >= angleSendInterval) { // отправка угла обратно в камеру
+        char angleBuffer[20];
+        snprintf(angleBuffer, sizeof(angleBuffer),
+                 "ANGLE:%.1f", actualSteerAngle);
+        udp.beginPacket(maixcamIP, maixcamPort);
+        udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
+        udp.endPacket();
         lastAngleSend = millis();
     }
-}    
+}
  void processObstacleData(char* data) {
-     // Формат: "OBSTACLE:1:COUNT:2:ANGLE:12.5"
-     String message = String(data);
-    
-     if (message.startsWith("OBSTACLE:")) {
-         int obstacleValue = 0;
-         int countValue = 0;
-         float angleValue = 0.0;
-        
-         sscanf(data, "OBSTACLE:%d:COUNT:%d:ANGLE:%f", &obstacleValue, &countValue, &angleValue);
-        
-         obstacleDetected = (obstacleValue == 1);
-         obstacleCount = countValue;
-         lastObstacleTime = millis();
-         if (obstacleDetected && StopupTimer == 0) { 
-             setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
-             powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения          
-             StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3);        
-             }
-         }
-     }
- void sendSteeringAngle() {
-     // Формат: "ANGLE:12.5" - отправляем actualSteerAngle
-     char angleBuffer[20];
-     snprintf(angleBuffer, sizeof(angleBuffer), "ANGLE:%.1f", actualSteerAngle);    
-     udp.beginPacket(maixcamIP, maixcamPort);
-     udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
-     udp.endPacket();   
-     }
+    if (strncmp(data, "OBSTACLE:", 9) == 0) {
+        int obstacleValue = 0;
+        int countValue = 0;
+        float angleValue = 0.0f;
+
+        if (sscanf(data, "OBSTACLE:%d:COUNT:%d:ANGLE:%f",
+                   &obstacleValue, &countValue, &angleValue) == 3) {
+
+            obstacleDetected = (obstacleValue == 1);
+            obstacleCount = countValue;
+            steeringAngle = angleValue;
+            lastObstacleTime = millis();
+
+            if (obstacleDetected && StopupTimer == 0) {
+                setGasPin(HYDRAULIC_POWER_DOWN, true);
+                powerdownTimer = millis() + (hydConfig.user1 * 200);
+                StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3);
+            }
+        }
+    }
+ } 
  void controlFpvSwitch() {
     // FPV работает только при наличии связи с пультом
     if (!crsf.isLinkUp()) {
