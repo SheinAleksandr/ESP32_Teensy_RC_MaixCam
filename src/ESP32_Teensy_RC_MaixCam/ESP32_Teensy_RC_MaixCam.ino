@@ -259,8 +259,7 @@ void setup() {
              isHeaderFound = true;
              tempHeader = 0;
              } else {
-                 tempHeader = temp; // Сохраняем для следующей итерации
-                 return;
+                 tempHeader = temp; // Сохраняем для следующей итерации                 
                  }
          }
          if (SerialTeensy.available() > 2 && isHeaderFound && !isPGNFound) {
