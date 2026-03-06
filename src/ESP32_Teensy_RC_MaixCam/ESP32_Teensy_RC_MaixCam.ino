@@ -16,7 +16,10 @@ const char* password = "12345678";
 WiFiUDP udp;
 unsigned int localPort = 8888;  // Порт для приема данных от MaixCam
 
-// Переменные для данных о препятствиях
+// ===================== MaixCam =====================
+bool maixcamOnline = false;
+uint32_t lastMaixPacketTime = 0;
+const uint32_t MAIXCAM_TIMEOUT_MS = 2000;
 bool obstacleDetected = false;
 int obstacleCount = 0;
 float steeringAngle = 0.0;
@@ -78,6 +81,7 @@ bool isPGNFound = false; // Флаг, указывающий, найден ли 
 bool isHeaderFound = false; // Флаг, указывающий, найден ли заголовок
 uint8_t pgn = 0; // Идентификатор PGN
 uint8_t dataLength = 0; // Длина данных
+uint8_t idx = 0; // Индекс для перебора данных
 uint8_t byte2 = 0; //  ДОБАВИТЬ эту переменную
 int16_t tempHeader = 0; // Временная переменная для хранения заголовка
  
@@ -331,22 +335,6 @@ void setup() {
              isHeaderFound = isPGNFound = false;
              pgn = dataLength = byte2 = 0;
              }
-     // Прием UDP пакетов от MaixCam
-     int packetSize = udp.parsePacket();
-     if (packetSize) {
-         char packetBuffer[255];
-         int len = udp.read(packetBuffer, 255);
-         if (len > 0) {
-             packetBuffer[len] = 0;
-             processObstacleData(packetBuffer);
-             }
-         }    
-     // Отправка actualSteerAngle на MaixCam
-     if (millis() - lastAngleSend > angleSendInterval) {
-         sendSteeringAngle();
-         lastAngleSend = millis();
-         }
-
      crsf.update(); // Обновление данных CRSF
      channel2Value = crsf.getChannel(2); // мощность
      channel4Value = crsf.getChannel(4); // сцепление
@@ -365,7 +353,8 @@ void setup() {
     handleStop();                      // Стоп   
     handleUTurn();                     // Разворот
     handlePowerActuatorBySpeedPID();   // ПИД регулятор    
-    handlePark();                      // Сцепление   
+    handlePark();                      // Сцепление
+    controlMaixCam();   
     controlFpvSwitch();
     //debugPlotFPV();
  }
@@ -576,6 +565,25 @@ void setup() {
                  analogWrite(HYDRAULIC_POWER_DOWN, 0);
                  }
      }
+ void controlMaixCam() {
+    bool wifiClientPresent = (WiFi.softAPgetStationNum() > 0);    
+    int packetSize = udp.parsePacket(); // Прием UDP от MaixCam
+    if (packetSize > 0) {
+        char packetBuffer[255];
+        int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+        if (len > 0) {
+            packetBuffer[len] = 0;
+            processObstacleData(packetBuffer);
+            lastMaixPacketTime = millis();
+        }
+    }    
+    maixcamOnline = wifiClientPresent && // Камера считается онлайн, если есть клиент Wi-Fi и недавно приходил UDP пакет
+                    (millis() - lastMaixPacketTime <= MAIXCAM_TIMEOUT_MS);    
+    if (maixcamOnline && (millis() - lastAngleSend >= angleSendInterval)) { // Отправка угла только если камера онлайн
+        sendSteeringAngle();
+        lastAngleSend = millis();
+    }
+}    
  void processObstacleData(char* data) {
      // Формат: "OBSTACLE:1:COUNT:2:ANGLE:12.5"
      String message = String(data);
