@@ -366,18 +366,23 @@ void setup() {
      if (millis() - lastAngleSend > angleSendInterval) {
          sendSteeringAngle();
          lastAngleSend = millis();
-         }       
+         }
+
+     crsf.update(); // Обновление данных CRSF
      channel2Value = crsf.getChannel(2); // мощность
      channel4Value = crsf.getChannel(4); // сцепление
      channel6Value = crsf.getChannel(6); // геостоп
      channel5Value = crsf.getChannel(5); // обновление значения на канале 5 вверх
      channel7Value = crsf.getChannel(7); // выбор FPV камеры
      channel8Value = crsf.getChannel(8); // обновление значения на канале 8 вниз    
-     channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление             
-
+     channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление
+     //Check if RX1 is connected
+     if (crsf.isLinkUp() && channel9Value > 1500) {      
+         sendChannels(crsf);
+         }
      // Обработка ВСЕХ функций управления
-     handleFpvCameraSwitch();
-     updateFpvSwitchPwm();
+    handleFpvCameraSwitch();
+    updateFpvSwitchPwm();
      if (FPV_PIN_DEBUG) {
          uint32_t nowMs = millis();
          if (nowMs - fpvDebugLastMs >= FPV_PIN_DEBUG_INTERVAL_MS) {
@@ -389,23 +394,13 @@ void setup() {
              Serial.println(channel7Value);
              }
          }
-     handleButtons();                   // Кнопки + мощность
-     handlePowerActuatorBySpeedPID();   // ПИД регулятор
-     handleUTurn();                     // Разворот
-     handlePark();                      // Сцепление
-     handleStop();                      // Стоп
-     handleHydraulicRC();               // RC управление
-     handleHydraulic();                 // Гидравлика (AOG команды)
-     hydraulicTimedPins();              // Таймеры гидравлики
-     crsf.update(); // Обновление данных CRSF
-     //Check if RX1 is connected
-     if (crsf.isLinkUp() && channel9Value > 1500) {      
-         sendChannels(crsf);
-         }/* else {
-                 // No RX connected, send fallback channels
-                 sendFallbackChannels();       
-                 }*/
-     }
+    handleButtons();                   // Кнопки + мощность
+    controlHydraulic();               // RC управление  
+    handleStop();                      // Стоп   
+    handleUTurn();                     // Разворот
+    handlePowerActuatorBySpeedPID();   // ПИД регулятор    
+    handlePark();                      // Сцепление    
+ }
 
  void setGasPin(int pin, bool state) { // Для пинов, управляемых через ШИМ (газ)
      if (state) {
@@ -413,12 +408,7 @@ void setup() {
          } else {
              analogWrite(pin, 0);   
              }
-     }
-
- void hydraulicTimedPins() {
-     if (raiseTimer  && millis() > raiseTimer )  raiseTimer  = triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
-     if (lowerTimer  && millis() > lowerTimer )  lowerTimer  = triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
-     }
+     }    
 
  int triggerPin(int pin, bool state, int timer) {    
      digitalWrite(pin, state);
@@ -426,42 +416,69 @@ void setup() {
      return 0;
      }    
 
- void handleHydraulic() {  // функция управления  гидравликой
-     if(hydLift == 0 ) {
-        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh ,0);
-        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh ,0);    
+ void controlHydraulic() {  // функция управления  гидравликой
+    if (raiseTimer  && millis() > raiseTimer )  raiseTimer  = triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+    if (lowerTimer  && millis() > lowerTimer )  lowerTimer  = triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+    // 2. RC команды
+    bool rcRaise = crsf.isLinkUp() && (channel5Value > 1500);
+    bool rcLower = crsf.isLinkUp() && (channel8Value > 1500);
+    // Если одновременно нажаты обе команды — выключить оба выхода
+    if (rcRaise && rcLower) {
+        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+        raiseTimer = 0;
+        lowerTimer = 0;
         hydLiftPrev = 0;
-        return; //Disabled
-     } 
-     if (hydLift == hydLiftPrev) return; //nothing changed nothing to do
-         hydLiftPrev = hydLift;
-         if (hydLift == 2 && hydConfig.enableToolLift) { //raise    
-             if ( raiseTimer == 0 && lowerTimer == 0) { //now we care about timing      
-                  raiseTimer = triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, hydConfig.raiseTime);
-                 }
-         } else if(hydLift == 1 && hydConfig.enableToolLift ) { //lower    
-                if ( raiseTimer == 0 && lowerTimer == 0) { //now we care about timing    
-                     lowerTimer = triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, hydConfig.lowerTime);
-                     }
-                 } 
-     }
-
- void handleHydraulicRC() {    
-     if (raiseTimer == 0 && lowerTimer == 0) {
-         if (channel5Value > 1500) {
-             triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, 0);
-             } else {
-             triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
-             }
-         }        
-     if (lowerTimer == 0 && raiseTimer == 0) {
-         if (channel8Value > 1500) {
-             triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, 0);
-             } else {
-                 triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
-                 }
-             }
-     }
+        return;
+    }
+    // 3. Ручное управление имеет приоритет над AOG
+    if (rcRaise) {
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);     // гарантированно выключить вниз
+        triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, 0);        // включить вверх
+        raiseTimer = 0;
+        lowerTimer = 0;
+        hydLiftPrev = 0;
+        return;
+    }
+    if (rcLower) {
+        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);         // гарантированно выключить вверх
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, 0);     // включить вниз
+        raiseTimer = 0;
+        lowerTimer = 0;
+        hydLiftPrev = 0;
+        return;
+    }
+    // 4. Если RC не активно, возвращаем выходы в неактивное состояние,
+    // но только если нет активных таймеров AOG
+    if (!raiseTimer && !lowerTimer) {
+        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+    }
+    // 5. Пока работает таймер AOG — новые AOG-команды не принимаем
+    if (raiseTimer || lowerTimer) return;
+    // 6. Если AOG не просит подъем/опускание — ничего не делаем
+    if (hydLift == 0) {
+        hydLiftPrev = 0;
+        return;
+    }
+    // 7. Если функция отключена в конфиге — ничего не делаем
+    if (!hydConfig.enableToolLift) {
+        hydLiftPrev = 0;
+        return;
+    }
+    // 8. Если состояние не изменилось — ничего не делаем
+    if (hydLift == hydLiftPrev) return;
+    hydLiftPrev = hydLift;
+    // 9. Команды от AOG выполняем таймером
+    if (hydLift == 2) { // raise
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+        raiseTimer = triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, hydConfig.raiseTime);
+    }
+    else if (hydLift == 1) { // lower
+        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+        lowerTimer = triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, hydConfig.lowerTime);
+    }
+}
 
  void handleUTurn() {  // функция управления таймерами  мощности   
      if (powerupTimer && millis() >  powerupTimer) { // Обработка таймера POWER_UP
