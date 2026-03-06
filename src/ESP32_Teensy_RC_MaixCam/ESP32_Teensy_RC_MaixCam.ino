@@ -283,8 +283,8 @@ void setup() {
                  //Serial.println(hydLift);
                  tramline = SerialTeensy.read();
                  geoStop = SerialTeensy.read();
-                 Serial.print("geoStop: ");
-                 Serial.println(geoStop);
+                 //Serial.print("geoStop: ");
+                 //Serial.println(geoStop);
                  recordedSpeed = (float)SerialTeensy.read(); // записанный путь
                  //Serial.print(" recordedSpeed: ");
                  //Serial.println( recordedSpeed);           
@@ -381,24 +381,13 @@ void setup() {
          }
     // Обработка ВСЕХ функций управления    
     handleButtons();                   // Кнопки + мощность
-    controlHydraulic();               // RC управление  
+    controlHydraulic();                // RC управление  
     handleStop();                      // Стоп   
     handleUTurn();                     // Разворот
     handlePowerActuatorBySpeedPID();   // ПИД регулятор    
     handlePark();                      // Сцепление   
-    handleFpvCameraSwitch();
-    updateFpvSwitchPwm();
-     if (FPV_PIN_DEBUG) {
-         uint32_t nowMs = millis();
-         if (nowMs - fpvDebugLastMs >= FPV_PIN_DEBUG_INTERVAL_MS) {
-             fpvDebugLastMs = nowMs;
-             Serial.print(digitalRead(FPV_SWITCH_PIN));
-             Serial.print('\t');
-             Serial.print(fpvPulseUs);
-             Serial.print('\t');
-             Serial.println(channel7Value);
-             }
-         } 
+    controlFpvSwitch();
+    //debugPlotFPV();
  }
 
  void setGasPin(int pin, bool state) { // Для пинов, управляемых через ШИМ (газ)
@@ -636,9 +625,21 @@ void setup() {
      udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
      udp.endPacket();   
      }
-void handleFpvCameraSwitch() {
-    if (channel7Value < 1300) fpvTargetCamera = 1;
-    else if (channel7Value > 1700) fpvTargetCamera = 3;    
+ void controlFpvSwitch() {
+    // FPV работает только при наличии связи с пультом
+    if (!crsf.isLinkUp()) {
+        fpvCurrentCamera = 1;
+        fpvTargetCamera = 1;
+        fpvPulseUs = 1000;
+        fpvPwmHighActive = false;
+        digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
+        fpvPwmCycleStartUs = micros();
+        return;
+    }
+
+    // Выбор камеры по каналу
+    if (channel7Value < 1300) fpvTargetCamera = 1;        
+    else if (channel7Value > 1700) fpvTargetCamera = 3;
     // Вариант для 3-го режима (2000+-200): AUTO смена камер по времени.
     // Чтобы включить:
     // 1) закомментируй строку: else if (channel7Value > 1700) fpvTargetCamera = 3;
@@ -652,32 +653,42 @@ void handleFpvCameraSwitch() {
             if (fpvTargetCamera > 3) fpvTargetCamera = 1;
         }
     }*/
-    else fpvTargetCamera = 2;
+    else fpvTargetCamera = 2;  
     if (fpvTargetCamera != fpvCurrentCamera) {
         fpvCurrentCamera = fpvTargetCamera;
         if (fpvCurrentCamera == 1) fpvPulseUs = 1000;
         else if (fpvCurrentCamera == 2) fpvPulseUs = 1500;
-         else fpvPulseUs = 2000;
-     }
- }
+        else fpvPulseUs = 2000;
+    }
 
- void updateFpvSwitchPwm() {
-     uint32_t nowUs = micros();
-     uint32_t elapsed = nowUs - fpvPwmCycleStartUs;
+    // Генерация PWM 50 Гц
+    uint32_t nowUs = micros();
+    uint32_t elapsed = nowUs - fpvPwmCycleStartUs;
 
-     if (!fpvPwmHighActive && elapsed >= FPV_SWITCH_PERIOD_US) {
-         fpvPwmCycleStartUs = nowUs;
-         digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? HIGH : LOW);
-         fpvPwmHighActive = true;
-         return;
-     }
+    if (!fpvPwmHighActive && elapsed >= FPV_SWITCH_PERIOD_US) {
+        fpvPwmCycleStartUs = nowUs;
+        digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? HIGH : LOW);
+        fpvPwmHighActive = true;
+        return;
+    }
 
-     if (fpvPwmHighActive && elapsed >= fpvPulseUs) {
-         digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
-         fpvPwmHighActive = false;
-     }
- }
+    if (fpvPwmHighActive && elapsed >= fpvPulseUs) {
+        digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
+        fpvPwmHighActive = false;
+    }
+}  
 
+ uint32_t lastPlot = 0;
+
+ /*void debugPlotFPV() {
+    if (millis() - lastPlot > 50) {   // ~20 Гц
+        lastPlot = millis();
+
+        Serial.print(channel7Value);  // значение канала
+        Serial.print('\t');           // разделитель
+        Serial.println(fpvPulseUs);   // длительность импульса (1000/1500/2000)
+    }
+}*/
  // Method to send channels based on CRSF instance
  void sendChannels(AlfredoCRSF& crsf) {
      const crsf_channels_t* channels_ptr = crsf.getChannelsPacked();
