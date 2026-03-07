@@ -97,7 +97,7 @@ float gpsSpeed; // Переменная для хранения скорости
 float recordedSpeed; // Переменная для хранения скорости в записанном пути
 uint8_t hydLiftPrev = 1;
 uint8_t uTurnPrev = 0; // Переменная для хранения предыдущего состояния uTurn
-uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния uTurn
+uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния геозоны
 uint32_t raiseTimer = 0; // Таймер для подъема
 uint32_t lowerTimer = 0; // Таймер для опускания
 uint32_t powerupTimer = 0; // Таймер для мощности+
