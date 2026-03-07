@@ -95,7 +95,7 @@ uint8_t hydLift = 0; // Переменная для хранения состо�
 uint8_t geoStop = 0; // Переменная для хранения состояния геозоны
 float gpsSpeed; // Переменная для хранения скорости GPS
 float recordedSpeed; // Переменная для хранения скорости в записанном пути
-uint8_t hydLiftPrev = 3;
+uint8_t hydLiftPrev = 1;
 uint8_t uTurnPrev = 0; // Переменная для хранения предыдущего состояния uTurn
 uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния uTurn                          
 uint32_t raiseTimer = 0; // Таймер для подъема
@@ -384,8 +384,7 @@ void setup() {
         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
         raiseTimer = 0;
-        lowerTimer = 0;
-        hydLiftPrev = 0;
+        lowerTimer = 0;        
         return;
     }
     // 3. Ручное управление имеет приоритет над AOG
@@ -393,16 +392,14 @@ void setup() {
         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);     // гарантированно выключить вниз
         triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, 0);        // включить вверх
         raiseTimer = 0;
-        lowerTimer = 0;
-        hydLiftPrev = 0;
+        lowerTimer = 0;        
         return;
     }
     if (rcLower) {
         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);         // гарантированно выключить вверх
         triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, 0);     // включить вниз
         raiseTimer = 0;
-        lowerTimer = 0;
-        hydLiftPrev = 0;
+        lowerTimer = 0;        
         return;
     }
     // 4. Если RC не активно, возвращаем выходы в неактивное состояние,
@@ -416,13 +413,11 @@ void setup() {
     // 6. Если AOG не просит подъем/опускание — ничего не делаем
     if (hydLift == 0) {
         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
-        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
-        hydLiftPrev = 0;
+        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);        
         return;
     }
     // 7. Если функция отключена в конфиге — ничего не делаем
-    if (!hydConfig.enableToolLift) {
-        hydLiftPrev = 0;
+    if (!hydConfig.enableToolLift) {        
         return;
     }
     // 8. Если состояние не изменилось — ничего не делаем
@@ -613,16 +608,9 @@ void setup() {
  } 
  void controlFpvSwitch() {
     // FPV работает только при наличии связи с пультом
-    if (!crsf.isLinkUp()) {
-        fpvCurrentCamera = 1;
-        fpvTargetCamera = 1;
-        fpvPulseUs = 1000;
-        fpvPwmHighActive = false;
-        digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
-        fpvPwmCycleStartUs = micros();
-        return;
+    if (!crsf.isLinkUp()) {        
+        fpvTargetCamera = 1;        
     }
-
     // Выбор камеры по каналу
     if (channel7Value < 1300) fpvTargetCamera = 1;        
     else if (channel7Value > 1700) fpvTargetCamera = 3;
