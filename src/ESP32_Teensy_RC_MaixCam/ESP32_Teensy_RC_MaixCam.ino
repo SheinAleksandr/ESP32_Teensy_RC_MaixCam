@@ -97,7 +97,7 @@ float gpsSpeed; // Переменная для хранения скорости
 float recordedSpeed; // Переменная для хранения скорости в записанном пути
 uint8_t hydLiftPrev = 1;
 uint8_t uTurnPrev = 0; // Переменная для хранения предыдущего состояния uTurn
-uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния uTurn                          
+uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния геозоны                          
 uint32_t raiseTimer = 0; // Таймер для подъема
 uint32_t lowerTimer = 0; // Таймер для опускания
 uint32_t powerupTimer = 0; // Таймер для мощности+
@@ -479,7 +479,8 @@ void setup() {
 
      if (StopdownTimer == 0 && StopupTimer == 0)
          if (channel6Value > 1500) { // проверяем    канал 6 
-         powerdownTimer= triggerPin(HYDRAULIC_POWER_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать газ              
+         setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
+         powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
          StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп        
          } 
   
