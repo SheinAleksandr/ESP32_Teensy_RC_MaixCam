@@ -465,7 +465,8 @@ void setup() {
 
      if (StopdownTimer == 0 && StopupTimer == 0)
          if (channel6Value > 1500) { // проверяем    канал 6 
-         powerdownTimer= triggerPin(HYDRAULIC_POWER_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать газ              
+         setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
+         powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения 
          StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп        
          } 
   
