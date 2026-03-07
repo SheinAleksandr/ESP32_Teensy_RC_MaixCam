@@ -16,7 +16,10 @@ const char* password = "12345678";
 WiFiUDP udp;
 unsigned int localPort = 8888;  // Порт для приема данных от MaixCam
 
-// Переменные для данных о препятствиях
+// ===================== MaixCam =====================
+bool maixcamOnline = false;
+uint32_t lastMaixPacketTime = 0;
+const uint32_t MAIXCAM_TIMEOUT_MS = 2000;
 bool obstacleDetected = false;
 int obstacleCount = 0;
 float steeringAngle = 0.0;
@@ -34,11 +37,6 @@ byte SerialTeensyRX = 16;  // Пин RX ESP 16
 byte SerialTeensyTX = 17;  // Пин TX ESP 17
 AlfredoCRSF Teensy;
 
-//HardwareSerial SerialOut(0); // Используем Serial
-//byte PIN_RX_OUT = 3;  // Пин RX ESP 3 
-//byte PIN_TX_OUT = 1;  // Пин TX ESP 1
-//AlfredoCRSF Out;
-
 HardwareSerial SerialCRSF(1); // 1 - это UART1 на ESP32
 byte CRSF_RX = 15;  // Пин RX для CRSF (15)
 byte CRSF_TX = 4;   // Пин TX для CRSF (4)
@@ -49,7 +47,7 @@ int channel4Value = 0; // Глобальная переменная для хр�
 int channel6Value = 0; // Глобальная переменная для хранения значения канала 6 геозона
 int channel5Value = 0; // Глобальная переменная для хранения значения канала 5 подьем
 int channel8Value = 0; // Глобальная переменная для хранения значения канала 8 опускание
-int channel7Value = 0; // Глобальная переменная для хранения значения канала 7  сцепление
+int channel7Value = 0; // Глобальная переменная для хранения значения канала 7
 int channel9Value = 0; // Инициализация переменной включения руля фпв управление
 
 struct Config {
@@ -65,7 +63,7 @@ struct Config {
 
     };   Config hydConfig;   //8 bytes
 
-int16_t temp, EEread = 0; // temp - временная переменная, EEread - значение из EEPROM
+int16_t EEread = 0; // EEread - значение из EEPROM
 
 const uint8_t LOOP_TIME = 200; //5hz
 uint32_t lastTime = LOOP_TIME;
@@ -87,9 +85,6 @@ uint8_t idx = 0; // Индекс для перебора данных
 uint8_t byte2 = 0; //  ДОБАВИТЬ эту переменную
 int16_t tempHeader = 0; // Временная переменная для хранения заголовка
 
-//24 possible pins assigned to these functions
-uint8_t pin[] = { 1,2,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 };
- 
 //The variables used for storage
 uint8_t relayHi = 0;
 uint8_t relayLo = 0;
@@ -100,19 +95,15 @@ uint8_t hydLift = 0; // Переменная для хранения состо�
 uint8_t geoStop = 0; // Переменная для хранения состояния геозоны
 float gpsSpeed; // Переменная для хранения скорости GPS
 float recordedSpeed; // Переменная для хранения скорости в записанном пути
-uint8_t hydLiftPrev = 3;
+uint8_t hydLiftPrev = 1;
 uint8_t uTurnPrev = 0; // Переменная для хранения предыдущего состояния uTurn
 uint8_t geoStopPrev = 1; // Переменная для хранения предыдущего состояния uTurn
-uint16_t channel7ValuePrev = 1600; // Переменная для хранения предыдущего состояния сцепления                                   
 uint32_t raiseTimer = 0; // Таймер для подъема
 uint32_t lowerTimer = 0; // Таймер для опускания
 uint32_t powerupTimer = 0; // Таймер для мощности+
 uint32_t powerdownTimer = 0; // Таймер для мощности-
-uint32_t parkupTimer = 0; // Таймер для сцепления+
-uint32_t parkdownTimer = 0; // Таймер для сцепления-
 uint32_t StopupTimer = 0; // Таймер для стоп+
 uint32_t StopdownTimer = 0; // Таймер для стоп-
-int pidPowerValue = 0; // Глобальная переменная для значения ПИД-регулятора
     
 // Определяем пины для управления
 const int HYDRAULIC_GEOSTOP_UP =23 ; // Пин для гео-стопа +
@@ -181,11 +172,9 @@ void setup() {
      SerialCRSF.begin(CRSF_BAUDRATE, SERIAL_8N1, CRSF_RX, CRSF_TX);
      delay(1000); 
      SerialTeensy.begin(CRSF_BAUDRATE, SERIAL_8N1, SerialTeensyRX, SerialTeensyTX);// 115200
-     //SerialOut.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_RX_OUT, PIN_TX_OUT);
      delay(1000);
      crsf.begin(SerialCRSF);
      Teensy.begin(SerialTeensy); // Инициализация последовательного порта CRSF
-     //Out.begin(SerialOut);
 
      // Вывод значений из структуры hydConfig в монитор последовательного порта
      Serial.println("Values from EEPROM:");
@@ -244,7 +233,6 @@ void setup() {
              tempHeader = 0;
              } else {
                  tempHeader = temp; // Сохраняем для следующей итерации
-                 return;
                  }
          }
          if (SerialTeensy.available() > 2 && isHeaderFound && !isPGNFound) {
@@ -336,45 +324,26 @@ void setup() {
              isHeaderFound = isPGNFound = false;
              pgn = dataLength = byte2 = 0;
              }
-     // Прием UDP пакетов от MaixCam
-     int packetSize = udp.parsePacket();
-     if (packetSize) {
-         char packetBuffer[255];
-         int len = udp.read(packetBuffer, 255);
-         if (len > 0) {
-             packetBuffer[len] = 0;
-             processObstacleData(packetBuffer);
-             }
-         }    
-     // Отправка actualSteerAngle на MaixCam
-     if (millis() - lastAngleSend > angleSendInterval) {
-         sendSteeringAngle();
-         lastAngleSend = millis();
-         }       
+     crsf.update(); // Обновление данных CRSF
      channel2Value = crsf.getChannel(2); // мощность
      channel4Value = crsf.getChannel(4); // сцепление
      channel6Value = crsf.getChannel(6); // геостоп
      channel5Value = crsf.getChannel(5); // обновление значения на канале 5 вверх
-     channel7Value = crsf.getChannel(7); // сцепление фикс
+     channel7Value = crsf.getChannel(7); // значение канала 7
      channel8Value = crsf.getChannel(8); // обновление значения на канале 8 вниз    
      channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление             
-     // Обработка ВСЕХ функций управления
-     handleButtons();                   // Кнопки + мощность
-     handlePowerActuatorBySpeedPID();   // ПИД регулятор
-     handleUTurn();                     // Разворот
-     handlePark();                      // Сцепление
-     handleStop();                      // Стоп
-     handleHydraulicRC();               // RC управление
-     handleHydraulic();                 // Гидравлика (AOG команды)
-     hydraulicTimedPins();              // Таймеры гидравлики
-     crsf.update(); // Обновление данных CRSF
      //Check if RX1 is connected
      if (crsf.isLinkUp() && channel9Value > 1500) {      
          sendChannels(crsf);
-         }/* else {
-                 // No RX connected, send fallback channels
-                 sendFallbackChannels();       
-                 }*/
+         }
+     // Обработка ВСЕХ функций управления
+     handleButtons();                   // Кнопки + мощность
+     controlHydraulic();                // Гидравлика
+     handleStop();                      // Стоп
+     handleUTurn();                     // Разворот
+     handlePowerActuatorBySpeedPID();   // ПИД регулятор
+     handlePark();                      // Сцепление
+     controlMaixCam();                  // MaixCam
      }
 
  void setGasPin(int pin, bool state) { // Для пинов, управляемых через ШИМ (газ)
@@ -385,53 +354,71 @@ void setup() {
              }
      }
 
- void hydraulicTimedPins() {
-     if (raiseTimer  && millis() > raiseTimer )  raiseTimer  = triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
-     if (lowerTimer  && millis() > lowerTimer )  lowerTimer  = triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
-     }
-
- int triggerPin(int pin, bool state, int timer) {    
+ uint32_t triggerPin(int pin, bool state, uint32_t timer) {    
      digitalWrite(pin, state);
-     if(timer) return millis() + (1000 * timer);
+     if (timer) return millis() + (1000UL * timer);
      return 0;
      }    
 
- void handleHydraulic() {  // функция управления  гидравликой
-     if(hydLift == 0 ) {
-        triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh ,0);
-        triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh ,0);    
-        hydLiftPrev = 0;
-        return; //Disabled
-     } 
-     if (hydLift == hydLiftPrev) return; //nothing changed nothing to do
-         hydLiftPrev = hydLift;
-         if (hydLift == 2 && hydConfig.enableToolLift) { //raise    
-             if ( raiseTimer == 0 && lowerTimer == 0) { //now we care about timing      
-                  raiseTimer = triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, hydConfig.raiseTime);
-                 }
-         } else if(hydLift == 1 && hydConfig.enableToolLift ) { //lower    
-                if ( raiseTimer == 0 && lowerTimer == 0) { //now we care about timing    
-                     lowerTimer = triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, hydConfig.lowerTime);
-                     }
-                 } 
+ void controlHydraulic() {  // функция управления гидравликой
+     if (raiseTimer && millis() > raiseTimer) raiseTimer = triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+     if (lowerTimer && millis() > lowerTimer) lowerTimer = triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+
+     bool rcRaise = crsf.isLinkUp() && (channel5Value > 1500);
+     bool rcLower = crsf.isLinkUp() && (channel8Value > 1500);
+
+     if (rcRaise && rcLower) {
+         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+         raiseTimer = 0;
+         lowerTimer = 0;
+         return;
      }
 
- void handleHydraulicRC() {    
-     if (raiseTimer == 0 && lowerTimer == 0) {
-         if (channel5Value > 1500) {
-             triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, 0);
-             } else {
-             triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
-             }
-         }        
-     if (lowerTimer == 0 && raiseTimer == 0) {
-         if (channel8Value > 1500) {
-             triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, 0);
-             } else {
-                 triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
-                 }
-             }
+     if (rcRaise) {
+         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+         triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, 0);
+         raiseTimer = 0;
+         lowerTimer = 0;
+         return;
      }
+
+     if (rcLower) {
+         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+         triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, 0);
+         raiseTimer = 0;
+         lowerTimer = 0;
+         return;
+     }
+
+     if (!raiseTimer && !lowerTimer) {
+         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+     }
+
+     if (raiseTimer || lowerTimer) return;
+
+     if (hydLift == 0) {
+         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+         return;
+     }
+
+     if (!hydConfig.enableToolLift) {
+         return;
+     }
+
+     if (hydLift == hydLiftPrev) return;
+     hydLiftPrev = hydLift;
+
+     if (hydLift == 2) {
+         triggerPin(HYDRAULIC_LOWER_OR_DOWN, hydConfig.isRelayActiveHigh, 0);
+         raiseTimer = triggerPin(HYDRAULIC_LIFT_OR_UP, !hydConfig.isRelayActiveHigh, hydConfig.raiseTime);
+     } else if (hydLift == 1) {
+         triggerPin(HYDRAULIC_LIFT_OR_UP, hydConfig.isRelayActiveHigh, 0);
+         lowerTimer = triggerPin(HYDRAULIC_LOWER_OR_DOWN, !hydConfig.isRelayActiveHigh, hydConfig.lowerTime);
+     }
+ }
 
  void handleUTurn() {  // функция управления таймерами  мощности   
      if (powerupTimer && millis() >  powerupTimer) { // Обработка таймера POWER_UP
@@ -559,35 +546,51 @@ void setup() {
                  analogWrite(HYDRAULIC_POWER_DOWN, 0);
                  }
      }
+ void controlMaixCam() {
+     bool wifiClientPresent = (WiFi.softAPgetStationNum() > 0);
+     int packetSize = udp.parsePacket();
+
+     if (packetSize > 0) {
+         char packetBuffer[255];
+         int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+         if (len > 0) {
+             packetBuffer[len] = 0;
+             processObstacleData(packetBuffer);
+             lastMaixPacketTime = millis();
+         }
+     }
+
+     maixcamOnline = wifiClientPresent && (millis() - lastMaixPacketTime <= MAIXCAM_TIMEOUT_MS);
+     if (maixcamOnline && millis() - lastAngleSend >= angleSendInterval) {
+         char angleBuffer[20];
+         snprintf(angleBuffer, sizeof(angleBuffer), "ANGLE:%.1f", actualSteerAngle);
+         udp.beginPacket(maixcamIP, maixcamPort);
+         udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
+         udp.endPacket();
+         lastAngleSend = millis();
+     }
+ }
+
  void processObstacleData(char* data) {
-     // Формат: "OBSTACLE:1:COUNT:2:ANGLE:12.5"
-     String message = String(data);
-    
-     if (message.startsWith("OBSTACLE:")) {
+     if (strncmp(data, "OBSTACLE:", 9) == 0) {
          int obstacleValue = 0;
          int countValue = 0;
-         float angleValue = 0.0;
-        
-         sscanf(data, "OBSTACLE:%d:COUNT:%d:ANGLE:%f", &obstacleValue, &countValue, &angleValue);
-        
-         obstacleDetected = (obstacleValue == 1);
-         obstacleCount = countValue;
-         lastObstacleTime = millis();
-         if (obstacleDetected && StopupTimer == 0) { 
-             setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
-             powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения          
-             StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3);        
+         float angleValue = 0.0f;
+
+         if (sscanf(data, "OBSTACLE:%d:COUNT:%d:ANGLE:%f", &obstacleValue, &countValue, &angleValue) == 3) {
+             obstacleDetected = (obstacleValue == 1);
+             obstacleCount = countValue;
+             steeringAngle = angleValue;
+             lastObstacleTime = millis();
+
+             if (obstacleDetected && StopupTimer == 0) {
+                 setGasPin(HYDRAULIC_POWER_DOWN, true);
+                 powerdownTimer = millis() + (hydConfig.user1 * 200);
+                 StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3);
              }
          }
      }
- void sendSteeringAngle() {
-     // Формат: "ANGLE:12.5" - отправляем actualSteerAngle
-     char angleBuffer[20];
-     snprintf(angleBuffer, sizeof(angleBuffer), "ANGLE:%.1f", actualSteerAngle);    
-     udp.beginPacket(maixcamIP, maixcamPort);
-     udp.write((uint8_t*)angleBuffer, strlen(angleBuffer));
-     udp.endPacket();   
-     }
+ }
  // Method to send channels based on CRSF instance
  void sendChannels(AlfredoCRSF& crsf) {
      const crsf_channels_t* channels_ptr = crsf.getChannelsPacked();
