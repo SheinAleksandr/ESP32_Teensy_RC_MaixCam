@@ -4,7 +4,8 @@
 #include <AlfredoCRSF.h> 
 #include <HardwareSerial.h>
 
-#define CRSF_BAUDRATE 420000
+#define CRSF_BAUDRATE 420000       // Скорость UART для RC приёмника (CRSF протокол)
+#define TEENSY_BAUDRATE 115200     // Скорость UART для связи с Teensy
 #define EEP_Ident 0x5400
 #define HYDRAULIC_ENABLED true
 #define HYDRAULIC_DEBUG false
@@ -33,9 +34,8 @@ IPAddress maixcamIP(192, 168, 4, 2); // Типичный IP для клиент�
 unsigned int maixcamPort = 8889;
 
 HardwareSerial SerialTeensy(2); // Используем Serial2
-byte SerialTeensyRX = 16;  // Пин RX ESP 16 
+byte SerialTeensyRX = 16;  // Пин RX ESP 16
 byte SerialTeensyTX = 17;  // Пин TX ESP 17
-AlfredoCRSF Teensy;
 
 HardwareSerial SerialCRSF(1); // 1 - это UART1 на ESP32
 byte CRSF_RX = 15;  // Пин RX для CRSF (15)
@@ -182,10 +182,9 @@ void setup() {
   
      SerialCRSF.begin(CRSF_BAUDRATE, SERIAL_8N1, CRSF_RX, CRSF_TX);
      delay(1000); 
-     SerialTeensy.begin(CRSF_BAUDRATE, SERIAL_8N1, SerialTeensyRX, SerialTeensyTX);// 115200     
+     SerialTeensy.begin(TEENSY_BAUDRATE, SERIAL_8N1, SerialTeensyRX, SerialTeensyTX);
      delay(1000);
      crsf.begin(SerialCRSF);
-     Teensy.begin(SerialTeensy); // Инициализация последовательного порта CRSF     
 
      // Вывод значений из структуры hydConfig в монитор последовательного порта
      Serial.println("Values from EEPROM:");
@@ -344,8 +343,8 @@ void setup() {
      channel8Value = crsf.getChannel(8); // обновление значения на канале 8 вниз    
      channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление
      //Check if RX1 is connected
-     if (crsf.isLinkUp() && channel9Value > 1500) {      
-         sendChannels(crsf);
+     if (crsf.isLinkUp() && channel9Value > 1500) {
+         sendAngleToTeensy();
          }
     // Обработка ВСЕХ функций управления    
     handleButtons();                   // Кнопки + мощность
@@ -606,14 +605,14 @@ void setup() {
             }
         }
     }
- } 
+ }
  void controlFpvSwitch() {
     // FPV работает только при наличии связи с пультом
-    if (!crsf.isLinkUp()) {        
-        fpvTargetCamera = 1;        
+    if (!crsf.isLinkUp()) {
+        fpvTargetCamera = 1;
     }
     // Выбор камеры по каналу
-    if (channel7Value < 1300) fpvTargetCamera = 1;        
+    if (channel7Value < 1300) fpvTargetCamera = 1;
     else if (channel7Value > 1700) fpvTargetCamera = 3;
     // Вариант для 3-го режима (2000+-200): AUTO смена камер по времени.
     // Чтобы включить:
@@ -628,7 +627,7 @@ void setup() {
             if (fpvTargetCamera > 3) fpvTargetCamera = 1;
         }
     }*/
-    else fpvTargetCamera = 2;  
+    else fpvTargetCamera = 2;
     if (fpvTargetCamera != fpvCurrentCamera) {
         fpvCurrentCamera = fpvTargetCamera;
         if (fpvCurrentCamera == 1) fpvPulseUs = 1000;
@@ -651,7 +650,7 @@ void setup() {
         digitalWrite(FPV_SWITCH_PIN, FPV_SWITCH_ACTIVE_HIGH ? LOW : HIGH);
         fpvPwmHighActive = false;
     }
-}  
+}
 
  uint32_t lastPlot = 0;
 
@@ -664,10 +663,29 @@ void setup() {
         Serial.println(fpvPulseUs);   // длительность импульса (1000/1500/2000)
     }
 }*/
- // Method to send channels based on CRSF instance
- void sendChannels(AlfredoCRSF& crsf) {
-     const crsf_channels_t* channels_ptr = crsf.getChannelsPacked();
-     Teensy.writePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_RC_CHANNELS_PACKED, channels_ptr, sizeof(*channels_ptr));
+ // Отправка угла поворота в Teensy вместо пакетов пульта
+ void sendAngleToTeensy() {
+     int rcValue = crsf.getChannel(1);
+     float angle = 0.0f;
+     if (rcValue < 1000) {
+         angle = -30.0f;
+     } else if (rcValue > 2000) {
+         angle = 30.0f;
+     } else if (rcValue >= 1400 && rcValue <= 1600) {
+         angle = 0.0f;
+     } else {
+         float t = (float)(rcValue - 1000) / 1000.0f;
+         angle = -30.0f + t * 60.0f;
+     }
+     int16_t angleRaw = (int16_t)(angle * 100.0f);
+     uint8_t pkt[6];
+     pkt[0] = 0x85;
+     pkt[1] = 0x85;
+     pkt[2] = (uint8_t)(angleRaw & 0xFF);
+     pkt[3] = (uint8_t)((angleRaw >> 8) & 0xFF);
+     pkt[4] = 0x01; // флаг FPV активен
+     pkt[5] = pkt[2] ^ pkt[3] ^ pkt[4];
+     SerialTeensy.write(pkt, 6);
      }
 
  
