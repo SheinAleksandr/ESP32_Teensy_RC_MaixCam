@@ -344,8 +344,12 @@ void setup() {
      channel9Value = crsf.getChannel(9); // обновление значения на канале 9 фпв управление
      //Check if RX1 is connected
      if (crsf.isLinkUp() && channel9Value > 1500) {
-         sendAngleToTeensy();
+         static uint32_t lastAngleToTeensySend = 0;
+         if (millis() - lastAngleToTeensySend >= 50) {
+             lastAngleToTeensySend = millis();
+             sendAngleToTeensy();
          }
+     }
     // Обработка ВСЕХ функций управления    
     handleButtons();                   // Кнопки + мощность
     controlHydraulic();                // RC управление  
