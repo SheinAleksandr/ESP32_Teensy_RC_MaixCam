@@ -484,7 +484,7 @@ void setup() {
      if (StopdownTimer == 0 && StopupTimer == 0)
          if (channel6Value > 1500) { // проверяем    канал 6 
          setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
-         powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
+         powerdownTimer = millis() + (hydConfig.user1 * 300); // Установить таймер отключения
          StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп        
          } 
   
@@ -493,7 +493,7 @@ void setup() {
 
      if (geoStop == 1  && StopdownTimer == 0 && StopupTimer == 0) { // если геостоп активирован
          setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
-         powerdownTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
+         powerdownTimer = millis() + (hydConfig.user1 * 300); // Установить таймер отключения
          StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп
          } else {
              if (StopdownTimer == 0) {
@@ -608,7 +608,7 @@ void setup() {
 
             if (obstacleDetected && StopupTimer == 0) {
                 setGasPin(HYDRAULIC_POWER_DOWN, true);
-                powerdownTimer = millis() + (hydConfig.user1 * 200);
+                powerdownTimer = millis() + (hydConfig.user1 * 300);
                 StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3);
             }
         }
