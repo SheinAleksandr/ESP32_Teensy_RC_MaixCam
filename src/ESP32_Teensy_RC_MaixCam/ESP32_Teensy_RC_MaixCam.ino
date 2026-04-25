@@ -22,6 +22,7 @@ bool maixcamOnline = false;
 uint32_t lastMaixPacketTime = 0;
 const uint32_t MAIXCAM_TIMEOUT_MS = 2000;
 bool obstacleDetected = false;
+bool prevObstacleDetected = false;
 int obstacleCount = 0;
 float steeringAngle = 0.0;
 unsigned long lastObstacleTime = 0;
@@ -601,6 +602,9 @@ void setup() {
             obstacleCount = countValue;
             steeringAngle = angleValue;
             lastObstacleTime = millis();
+
+            if (obstacleDetected == prevObstacleDetected) return; // состояние не изменилось
+            prevObstacleDetected = obstacleDetected;              // обновляем предыдущее значение
 
             if (obstacleDetected && StopupTimer == 0) {
                 setGasPin(HYDRAULIC_POWER_DOWN, true);
