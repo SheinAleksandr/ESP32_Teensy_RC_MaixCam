@@ -17,6 +17,14 @@ const char* password = "12345678";
 WiFiUDP udp;
 unsigned int localPort = 8888;  // Порт для приема данных от MaixCam
 
+// UDP лог на смартфон (отправка при смене uTurn / hydLift / geoStop)
+WiFiUDP logUdp;
+const unsigned int LOG_UDP_PORT = 5555;   // Порт приёма на смартфоне
+IPAddress broadcastIP(192, 168, 4, 255);  // Broadcast в сети AP
+uint8_t logPrev_uTurn   = 255; // 255 = не отправлялось, гарантирует первую отправку
+uint8_t logPrev_hydLift = 255;
+uint8_t logPrev_geoStop = 255;
+
 // ===================== MaixCam =====================
 bool maixcamOnline = false;
 uint32_t lastMaixPacketTime = 0;
@@ -147,7 +155,9 @@ void setup() {
      Serial.println(WiFi.softAPmacAddress());    
      // Запускаем UDP сервер
      udp.begin(localPort);
-     Serial.println("UDP сервер запущен на порту 8888"); 
+     Serial.println("UDP сервер запущен на порту 8888");
+     logUdp.begin(LOG_UDP_PORT);
+     Serial.println("UDP лог запущен на порту 5555");
 
      EEPROM.begin(512); // Инициализация EEPROM с размером 512 байт
      EEPROM.get(0, EEread); // read identifier
@@ -335,6 +345,15 @@ void setup() {
              isHeaderFound = isPGNFound = false;
              pgn = dataLength = byte2 = 0;
              }
+
+     // Отправка лога при изменении любой из ключевых переменных
+     if (uTurn != logPrev_uTurn || hydLift != logPrev_hydLift || geoStop != logPrev_geoStop) {
+         logPrev_uTurn   = uTurn;
+         logPrev_hydLift = hydLift;
+         logPrev_geoStop = geoStop;
+         sendUdpLog();
+     }
+
      crsf.update(); // Обновление данных CRSF
      channel2Value = crsf.getChannel(2); // мощность
      channel4Value = crsf.getChannel(4); // сцепление
@@ -671,6 +690,18 @@ void setup() {
         Serial.println(fpvPulseUs);   // длительность импульса (1000/1500/2000)
     }
 }*/
+ // Отправка лога переменных на смартфон по UDP (broadcast)
+ void sendUdpLog() {
+     char buf[96];
+     uint32_t ms = millis() % 60000;
+     snprintf(buf, sizeof(buf),
+              "%02lu.%03lu {\"uTurn\":%u,\"hydLift\":%u,\"geoStop\":%u}",
+              ms / 1000, ms % 1000, uTurn, hydLift, geoStop);
+     logUdp.beginPacket(broadcastIP, LOG_UDP_PORT);
+     logUdp.write((uint8_t*)buf, strlen(buf));
+     logUdp.endPacket();
+ }
+
  // Отправка угла поворота в Teensy вместо пакетов пульта
  void sendAngleToTeensy() {
      int rcValue = crsf.getChannel(1);
