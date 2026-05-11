@@ -214,7 +214,7 @@ void setup() {
      if (currentTime - lastTime >= LOOP_TIME)    {
          lastTime = currentTime;    
          // Проверяем время с последнего обновления геостопа
-         if (currentTime - lastGeoStopUpdate > 2000) { // 2 секунды
+         if (currentTime - lastGeoStopUpdate > 1000) { // 1 секунда
              geoStop = 1; // Аварийный стоп - нет данных от AgOpenGPS       
          }        
          if (serialResetTimer++ > 20) {
@@ -482,7 +482,7 @@ void setup() {
      if (StopdownTimer  && millis() > StopdownTimer )  StopdownTimer  = triggerPin(HYDRAULIC_GEOSTOP_DOWN, hydConfig.isRelayActiveHigh, 0);
 
      if (StopdownTimer == 0 && StopupTimer == 0)
-         if (channel6Value > 1500) { // проверяем    канал 6 
+         if (channel6Value > 1500) { // проверяем    канал 6
          setGasPin(HYDRAULIC_POWER_DOWN, true); // сбавить газ
          powerdownTimer = millis() + (hydConfig.user1 * 300); // Установить таймер отключения
          StopdownTimer= triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3); // Активировать стоп        
