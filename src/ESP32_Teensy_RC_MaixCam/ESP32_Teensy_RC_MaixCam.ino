@@ -39,7 +39,7 @@ unsigned long lastAngleSend = 0;
 const unsigned long angleSendInterval = 100; // Отправка каждые 100мс
 
 // IP адрес MaixCam
-IPAddress maixcamIP(192, 168, 4, 2); // Типичный IP для клиента в сети ESP32 AP
+IPAddress maixcamIP(192, 168, 4, 255); // broadcast — угол получат все клиенты сети
 unsigned int maixcamPort = 8889;
 
 HardwareSerial SerialTeensy(2); // Используем Serial2
