@@ -547,43 +547,45 @@ void setup() {
                  }
          }
      }
- void handlePowerActuatorBySpeedPID() {   
-     static float integral = 0;  // Накопленная сумма ошибок    
+ void handlePowerActuatorBySpeedPID() {
+     // ПИД работает с фиксированным периодом 200 мс (5 Гц)
+     static uint32_t lastPidTime = 0;
+     if (millis() - lastPidTime < 200) return;
+     lastPidTime = millis();
+
+     static float integral = 0;
      float targetSpeed = recordedSpeed;
-     float currentSpeed = gpsSpeed * 0.1;
+     float currentSpeed = gpsSpeed * 0.1f;
 
      if (targetSpeed < 1 || currentSpeed < 1) {
-         return;   
-         }   
-     float speedError = targetSpeed - currentSpeed;    
-     integral += speedError;    
-     // Анти-windup (ограничение интеграла)
-     float maxIntegral = 50.0;
-     if (integral > maxIntegral) integral = maxIntegral;
-     if (integral < -maxIntegral) integral = -maxIntegral;    
-    
-     float Kp = (hydConfig.user2 > 0) ? (hydConfig.user2 / 2 ) : 30.0;    
-     float Ki = (hydConfig.user3 > 0) ? (hydConfig.user3 / 10.0) : 0.5;  
-     float pValue = Kp * speedError;
-     float iValue = Ki * integral;
-     float output = pValue + iValue;
-    
-     int16_t pwmDrive = constrain((int16_t)output, -255, 255);    
-    
-     if (pwmDrive > 0) {        
+         integral = 0; // сброс интеграла когда ПИД не активен
+         return;
+     }
+
+     float speedError = targetSpeed - currentSpeed;
+     integral += speedError;
+     // Анти-windup
+     if (integral >  50.0f) integral =  50.0f;
+     if (integral < -50.0f) integral = -50.0f;
+
+     // user2 — Kp напрямую, user3 — Ki*10
+     float Kp = (hydConfig.user2 > 0) ? (float)hydConfig.user2 : 30.0f;
+     float Ki = (hydConfig.user3 > 0) ? (hydConfig.user3 / 10.0f) : 0.5f;
+     float output = Kp * speedError + Ki * integral;
+
+     int16_t pwmDrive = constrain((int16_t)output, -255, 255);
+
+     if (pwmDrive > 0) {
          analogWrite(HYDRAULIC_POWER_DOWN, 0);
          analogWrite(HYDRAULIC_POWER_UP, pwmDrive);
-         } 
-         else if (pwmDrive < 0) {        
-             int brakePower = -pwmDrive;
-              analogWrite(HYDRAULIC_POWER_UP, 0);
-              analogWrite(HYDRAULIC_POWER_DOWN, brakePower);
-             }
-             else {        
-                 analogWrite(HYDRAULIC_POWER_UP, 0);
-                 analogWrite(HYDRAULIC_POWER_DOWN, 0);
-                 }
+     } else if (pwmDrive < 0) {
+         analogWrite(HYDRAULIC_POWER_UP, 0);
+         analogWrite(HYDRAULIC_POWER_DOWN, -pwmDrive);
+     } else {
+         analogWrite(HYDRAULIC_POWER_UP, 0);
+         analogWrite(HYDRAULIC_POWER_DOWN, 0);
      }
+ }
  void controlMaixCam() {
     bool wifiClientPresent = (WiFi.softAPgetStationNum() > 0);    
     int packetSize = udp.parsePacket(); // Приём UDP от камеры
