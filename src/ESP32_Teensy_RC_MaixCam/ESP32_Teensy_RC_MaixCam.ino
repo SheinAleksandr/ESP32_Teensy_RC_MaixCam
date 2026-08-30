@@ -35,6 +35,29 @@ int obstacleCount = 0;
 float steeringAngle = 0.0;
 unsigned long lastObstacleTime = 0;
 float actualSteerAngle = 0.0;  //  Используем actualSteerAngle из PGN 253
+
+// ===================== Автосцепление по препятствию с камеры =====================
+// Геостоп НЕ используется — на этом тракторе он глушит двигатель.
+// Остановка: газ вниз + выжать сцепление.
+// Трогание: газ вверх → отпускать сцепление на макс ПВМ (мёртвая зона)
+//           → при первом росте скорости (bite) сброс до 20% ПВМ
+//           → нарастающая прогрессия: шаг сам увеличивается каждые 200мс → PWM=255.
+enum ObstacleClutchState : uint8_t {
+    OBS_IDLE      = 0, // нормальная работа, handlePark() управляет сцеплением
+    OBS_STOPPING  = 1, // выжимаем сцепление + сбрасываем газ
+    OBS_STOPPED   = 2, // стоим, ждём пока камера скажет "чисто"
+    OBS_GAS_UP    = 3, // поднимаем газ, ждём пока двигатель наберёт обороты
+    OBS_RELEASING = 4  // отпускаем сцепление с обратной связью по ускорению GPS
+};
+ObstacleClutchState obsClutchState = OBS_IDLE;
+uint32_t obsClutchTimer  = 0;    // таймер ожидания текущей фазы (до когда ждать)
+float    obsPrevGpsSpeed = 0.0f; // скорость на предыдущем шаге (для расчёта ускорения)
+bool     obsBiteDetected = false; // флаг: момент зацепления сцепления уже обнаружен
+uint8_t  obsReleasePwm   = 255;  // текущий ПВМ актуатора отпуска (PARK_DOWN)
+uint8_t  obsReleaseStep  = 1;    // нарастающий шаг — сам увеличивается каждый цикл
+uint32_t obsClearTimer   = 0;    // момент когда пространство стало свободным (для 3с задержки)
+bool     obsGasRamping   = false; // флаг: идёт плавный подъём газа
+uint8_t  obsGasPwm       = 0;    // текущий ПВМ плавного подъёма газа (0→255)
 unsigned long lastAngleSend = 0;
 const unsigned long angleSendInterval = 100; // Отправка каждые 100мс
 
@@ -376,7 +399,8 @@ void setup() {
     handleStop();                      // Стоп   
     handleUTurn();                     // Разворот
     handlePowerActuatorBySpeedPID();   // ПИД регулятор    
-    handlePark();                      // Сцепление
+    handlePark();                      // Сцепление (RC)
+    handleObstacleClutch();            // Автосцепление по препятствию с камеры
     controlMaixCam();   
     controlFpvSwitch();
     //debugPlotFPV();
@@ -476,7 +500,9 @@ void setup() {
                  powerupTimer = millis() + (hydConfig.user1 * 200); // Установить таймер отключения
              }    
  }
- void handlePark() {  // функция управления  сцеплением  
+ void handlePark() {  // функция управления  сцеплением
+     // Если активен автомат по препятствию — он управляет сцеплением, не вмешиваемся
+     if (obsClutchState != OBS_IDLE) return;
      if (channel4Value > 1600) {
          // Плавное выжимание сцепления (пропорционально значению channel4Value)
          int pwmValue = map(channel4Value, 1600, 2100, 0, 255); // Преобразуем значение в диапазон 0–255
@@ -532,10 +558,11 @@ void setup() {
              setGasPin(HYDRAULIC_POWER_DOWN, true);
              setGasPin(HYDRAULIC_POWER_UP, false);      
              } else {        
-                     if (!powerupTimer && !powerdownTimer && recordedSpeed < 1 ) {
+                     // obsGasRamping: не обнулять газ пока идёт плавный подъём по препятствию
+                     if (!powerupTimer && !powerdownTimer && recordedSpeed < 1 && !obsGasRamping) {
                          setGasPin(HYDRAULIC_POWER_UP, false);
                          setGasPin(HYDRAULIC_POWER_DOWN, false);
-                         } 
+                         }
                      }      
      // Обработка стоп-кнопки
      if (stopDownPressed != lastStopDownState)  { // Проверяем изменение состояния
@@ -627,14 +654,137 @@ void setup() {
             if (obstacleDetected == prevObstacleDetected) return; // состояние не изменилось
             prevObstacleDetected = obstacleDetected;              // обновляем предыдущее значение
 
-            if (obstacleDetected && StopupTimer == 0) {
+            // Запускаем автосцепление только если автомат сейчас в покое
+            if (obstacleDetected && obsClutchState == OBS_IDLE) {                
+                // Выжимаем сцепление на максимум
+                analogWrite(HYDRAULIC_PARK_DOWN, 255);
+                analogWrite(HYDRAULIC_PARK_UP, 0);
+                // Сбрасываем газ
                 setGasPin(HYDRAULIC_POWER_DOWN, true);
-                powerdownTimer = millis() + (hydConfig.user1 * 300);
-                StopdownTimer = triggerPin(HYDRAULIC_GEOSTOP_DOWN, !hydConfig.isRelayActiveHigh, 3);
+                powerdownTimer = millis() + (hydConfig.user1 * 300UL);
+                // Ждём 4с полного хода актуатора сцепления, затем → OBS_STOPPED
+                obsClutchTimer = millis() + 4000;
+                obsClutchState = OBS_STOPPING;
             }
         }
     }
  }
+ // ===================== Конечный автомат: сцепление по препятствию =====================
+ void handleObstacleClutch() {
+    if (obsClutchState == OBS_IDLE) return;
+
+    // Работаем строго раз в 200мс — синхронно с обновлением gpsSpeed
+    static uint32_t lastObsTime = 0;
+    uint32_t now = millis();
+    if (now - lastObsTime < 200) return;
+    lastObsTime = now;
+
+    switch (obsClutchState) {
+
+        case OBS_STOPPING:
+            // Держим сцепление выжатым, ждём завершения хода актуатора
+            analogWrite(HYDRAULIC_PARK_DOWN,   255);
+            analogWrite(HYDRAULIC_PARK_UP, 0);
+            if (now >= obsClutchTimer) {
+                analogWrite(HYDRAULIC_PARK_DOWN, 0);  // ход завершён (или отсечён концевиком раньше) — снимаем сигнал
+                obsClutchState = OBS_STOPPED;
+            }
+            break;
+
+        case OBS_STOPPED:
+            // Трактор стоит, сцепление выжато — ждём 3с непрерывно свободного пространства           
+            if (obstacleDetected) {
+                // Препятствие снова появилось — сбрасываем счётчик чистого времени
+                obsClearTimer = 0;
+            } else {
+                if (obsClearTimer == 0) {
+                    // Пространство только что освободилось — запускаем отсчёт 3с
+                    obsClearTimer = now + 3000;
+                } else if (now >= obsClearTimer) {
+                    // 3 секунды чисто — начинаем отпускать сцепление (газ пока не трогаем)
+                    obsClearTimer   = 0;
+                    obsPrevGpsSpeed = gpsSpeed;
+                    obsBiteDetected = false;
+                    obsReleasePwm   = 128; // мёртвая зона 
+                    obsReleaseStep  = 1;
+                    obsClutchState  = OBS_RELEASING;
+                }
+            }
+            break;
+
+        case OBS_GAS_UP:
+            // Состояние не используется — газ и сцепление стартуют одновременно из OBS_STOPPED
+            break;
+
+        case OBS_RELEASING: {
+            // Если препятствие вернулось — немедленно выжать сцепление, сбросить газ и рамп
+            if (obstacleDetected) {
+                obsGasRamping  = false;
+                obsGasPwm      = 0;
+                setGasPin(HYDRAULIC_POWER_DOWN, true);
+                powerdownTimer = now + (hydConfig.user1 * 300UL);
+                analogWrite(HYDRAULIC_PARK_DOWN, 255);
+                analogWrite(HYDRAULIC_PARK_UP, 0);
+                obsClutchTimer = now + 4000;
+                obsClutchState = OBS_STOPPING;
+                break;
+            }
+
+            // Расчёт ускорения: разница скоростей за 200мс цикл.
+            // gpsSpeed приходит в единицах 0.1 км/ч (т.е. gpsSpeed=100 → 10 км/ч).
+            // GPS шум ±1–2 единицы на стоянке, поэтому порог 3 = 0.3 км/ч за 200мс.
+            float accel = gpsSpeed - obsPrevGpsSpeed;
+            obsPrevGpsSpeed = gpsSpeed;
+
+            if (!obsBiteDetected) {
+                if (accel > 3.0f) {
+                    // Зацепление: скорость пошла вверх — запускаем плавный подъём газа и сброс ПВМ до 20%
+                    obsBiteDetected = true;
+                    obsGasRamping   = true; // включаем плавный подъём
+                    obsReleasePwm   = 51;   // 51/255 ≈ 20%
+                    obsReleaseStep  = 1;    // сбрасываем шаг прогрессии сцепления
+                    obsGasPwm       = 51;    // газ стартует                     
+                } else {
+                    // Мёртвая зона: сцепление ещё не работает 
+                    obsReleasePwm = 128;
+                }
+            } else {
+                // Прогрессия после зацепления:
+                // obsReleaseStep сам растёт каждый цикл → ПВМ нарастает по параболе (~4 сек до 255)
+                int16_t next = (int16_t)obsReleasePwm + obsReleaseStep;
+                obsReleaseStep++;
+                if (next >= 255) {
+                    // Сцепление полностью отпущено — выключаем актуатор и завершаем
+                    analogWrite(HYDRAULIC_PARK_DOWN, 0);
+                    analogWrite(HYDRAULIC_PARK_UP,   0);
+                    obsBiteDetected = false;
+                    obsGasRamping   = false;
+                    obsClutchState  = OBS_IDLE;
+                    break;
+                }
+                obsReleasePwm = (uint8_t)next;
+            }
+
+            // Плавный подъём газа: шаг 20 каждые 200мс → ~2,5 сек до максимума
+            if (obsGasRamping) {
+                int16_t nextGas = (int16_t)obsGasPwm + 20;
+                obsGasPwm = (nextGas >= 255) ? 255 : (uint8_t)nextGas;
+                analogWrite(HYDRAULIC_POWER_UP,   obsGasPwm);
+                analogWrite(HYDRAULIC_POWER_DOWN, 0);
+                if (obsGasPwm >= 255) obsGasRamping = false;
+            }
+
+            // Подаём ПВМ на актуатор отпуска сцепления
+            analogWrite(HYDRAULIC_PARK_UP, obsReleasePwm);
+            analogWrite(HYDRAULIC_PARK_DOWN,   0);
+            break;
+        }
+
+        default:
+            break;
+    }
+ }
+
  void controlFpvSwitch() {
     // FPV работает только при наличии связи с пультом
     if (!crsf.isLinkUp()) {
