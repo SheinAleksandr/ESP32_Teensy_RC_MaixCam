@@ -283,85 +283,67 @@ void setup() {
              byte2 = SerialTeensy.read(); // Byte 2 - Source (127 для PGN 238/239, 126 для PGN 253)    
              pgn = SerialTeensy.read();
              dataLength = SerialTeensy.read();
-             isPGNFound = true;
-             idx = 0;
+             if (dataLength > 16) { isHeaderFound = isPGNFound = false; pgn = dataLength = byte2 = 0; }
+             else { isPGNFound = true; idx = 0; }
              }
              if (SerialTeensy.available() >= dataLength && isHeaderFound && isPGNFound) {
                  if (pgn == 239 && byte2 == 127) { // Обработка PGN 239
-                 uTurn = SerialTeensy.read();
-                 //Serial.print("uTurn: ");
-                 //Serial.println(uTurn);
-                 gpsSpeed = (float)SerialTeensy.read();            
-                 lastGeoStopUpdate = millis();// ОБНОВЛЯЕМ время последнего получения
-                 //Serial.print(" gpsSpeed: ");
-                 //Serial.println( gpsSpeed);
-                 hydLift = SerialTeensy.read();
-                 //Serial.print("hydLift: ");
-                 //Serial.println(hydLift);
-                 tramline = SerialTeensy.read();
-                 geoStop = SerialTeensy.read();
-                 //Serial.print("geoStop: ");
-                 //Serial.println(geoStop);
-                 recordedSpeed = (float)SerialTeensy.read(); // записанный путь
-                 //Serial.print(" recordedSpeed: ");
-                 //Serial.println( recordedSpeed);           
-                 relayLo = SerialTeensy.read();
-                 relayHi = SerialTeensy.read();
-                     if (hydConfig.isRelayActiveHigh) {
-                     tramline = 255 - tramline;
-                     relayLo = 255 - relayLo;
-                     }     
-                 SerialTeensy.read(); // Пропускаем CRC            
-             } else if (pgn == 238 && byte2 == 127 && channel9Value <= 1500) { // Обработка PGN 238 только если channel9Value <= 1500
-                 hydConfig.raiseTime = SerialTeensy.read();
-                 hydConfig.lowerTime = SerialTeensy.read();
-                 hydConfig.enableToolLift = SerialTeensy.read();
-                 uint8_t sett = SerialTeensy.read();
-                 hydConfig.isRelayActiveHigh = bitRead(sett, 0);
-                 hydConfig.enableToolLift = bitRead(sett, 1);
-                 hydConfig.user1 = SerialTeensy.read();
-                 hydConfig.user2 = SerialTeensy.read();
-                 hydConfig.user3 = SerialTeensy.read();
-                 hydConfig.user4 = SerialTeensy.read();
-                 SerialTeensy.read(); // Пропускаем CRC
-                 EEPROM.put(6, hydConfig);
-                 EEPROM.commit();
-                 resetFunc(); // Перезагрузка
-
-             } else if (pgn == 254 && byte2 == 127) { // ОБРАБОТКА PGN 254 (0xFE с byte2 = 127)        
-                 SerialTeensy.read(); //пропускаем
-                 SerialTeensy.read(); //пропускаем          
-                 SerialTeensy.read(); //пропускаем
-                 SerialTeensy.read(); //пропускаем
-                 SerialTeensy.read(); //пропускаем
-                 tram = SerialTeensy.read(); //читаем XTE
-                 //Serial.print(" tram: ");
-                 //Serial.println( tram);
-                 SerialTeensy.read(); //пропускаем               
-                 SerialTeensy.read(); //пропускаем        
-                 SerialTeensy.read(); // Пропускаем CRC (байт 13)
-
-             } else if (pgn == 0xFD && byte2 == 126) { // ОБРАБОТКА PGN 253 (0xFD с byte2 = 126)
-                 // PGN 253 - From AutoSteer (8 байт данных)
-                 // Структура: ActualSteerAngle*100 (2 байта), Heading (2 байта), Roll (2 байта), SwitchByte, pwmDisplay        
-                 // Читаем ActualSteerAngle * 100 (байты 5-6)
-                 uint8_t angleLow = SerialTeensy.read();
-                 uint8_t angleHigh = SerialTeensy.read();
-                 int16_t steerAngleRaw = (angleHigh << 8) | angleLow;
-                 actualSteerAngle = steerAngleRaw * 0.01f; // Преобразуем в градусы        
-                 SerialTeensy.read(); //пропускаем
-                 SerialTeensy.read(); //пропускаем
-                 SerialTeensy.read(); //пропускаем
-                 SerialTeensy.read(); //пропускаем
-                 switchByte = SerialTeensy.read(); //значение кнопок автопилота
-                 // Распаковка битов 
-                 workSwitch = switchByte & 1; // Бит 0
-                 steerSwitch = (switchByte >> 1) & 1; // Бит 1               
-                 SerialTeensy.read(); //пропускаем        
-                 SerialTeensy.read(); // Пропускаем CRC (байт 13)              
-                 //Serial.print(actualSteerAngle);
-                 //Serial.println();
-                 }    
+                     uint8_t d[8];
+                     for (uint8_t i = 0; i < 8; i++) d[i] = SerialTeensy.read();
+                     uint8_t crc239 = SerialTeensy.read();
+                     uint8_t sum239 = byte2 + pgn + dataLength;
+                     for (uint8_t i = 0; i < 8; i++) sum239 += d[i];
+                     if (sum239 == crc239) {
+                         uTurn         = d[0];
+                         gpsSpeed      = (float)d[1];
+                         hydLift       = d[2];
+                         tramline      = d[3];
+                         geoStop       = d[4];
+                         recordedSpeed = (float)d[5];
+                         relayLo       = d[6];
+                         relayHi       = d[7];
+                         if (hydConfig.isRelayActiveHigh) {
+                             tramline = 255 - tramline;
+                             relayLo  = 255 - relayLo;
+                         }
+                         lastGeoStopUpdate = millis();
+                     }
+                 } else if (pgn == 238 && byte2 == 127 && channel9Value <= 1500) { // Обработка PGN 238
+                     hydConfig.raiseTime     = SerialTeensy.read();
+                     hydConfig.lowerTime     = SerialTeensy.read();
+                     hydConfig.enableToolLift = SerialTeensy.read();
+                     uint8_t sett = SerialTeensy.read();
+                     hydConfig.isRelayActiveHigh = bitRead(sett, 0);
+                     hydConfig.enableToolLift    = bitRead(sett, 1);
+                     hydConfig.user1 = SerialTeensy.read();
+                     hydConfig.user2 = SerialTeensy.read();
+                     hydConfig.user3 = SerialTeensy.read();
+                     hydConfig.user4 = SerialTeensy.read();
+                     SerialTeensy.read(); // Пропускаем CRC
+                     EEPROM.put(6, hydConfig);
+                     EEPROM.commit();
+                     resetFunc(); // Перезагрузка
+                 } else if (pgn == 254 && byte2 == 127) { // ОБРАБОТКА PGN 254
+                     uint8_t d[8];
+                     for (uint8_t i = 0; i < 8; i++) d[i] = SerialTeensy.read();
+                     uint8_t crc254 = SerialTeensy.read();
+                     uint8_t sum254 = byte2 + pgn + dataLength;
+                     for (uint8_t i = 0; i < 8; i++) sum254 += d[i];
+                     if (sum254 == crc254) { tram = d[5]; }
+                 } else if (pgn == 0xFD && byte2 == 126) { // ОБРАБОТКА PGN 253
+                     uint8_t d[8];
+                     for (uint8_t i = 0; i < 8; i++) d[i] = SerialTeensy.read();
+                     uint8_t crc253 = SerialTeensy.read();
+                     uint8_t sum253 = byte2 + pgn + dataLength;
+                     for (uint8_t i = 0; i < 8; i++) sum253 += d[i];
+                     if (sum253 == crc253) {
+                         int16_t steerAngleRaw = ((int16_t)d[1] << 8) | d[0];
+                         actualSteerAngle = steerAngleRaw * 0.01f;
+                         switchByte  = d[6];
+                         workSwitch  = switchByte & 1;
+                         steerSwitch = (switchByte >> 1) & 1;
+                     }
+                 }
              watchdogTimer = 0; // Сброс watchdog
              serialResetTimer = 0; // Сброс таймера
              // Сброс состояния для следующего пакета
