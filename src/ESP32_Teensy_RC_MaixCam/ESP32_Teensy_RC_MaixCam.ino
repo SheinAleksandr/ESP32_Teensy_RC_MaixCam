@@ -10,8 +10,8 @@
 #define HYDRAULIC_ENABLED true
 #define HYDRAULIC_DEBUG false
 
-// Настройки Wi-Fi
-const char* ssid = "AOG4";
+// Настройки Wi-Fi — ESP32 подключается к точке доступа MaixCam
+const char* ssid = "AOG4";        // SSID точки доступа MaixCam
 const char* password = "12345678";
 // UDP
 WiFiUDP udp;
@@ -20,7 +20,7 @@ unsigned int localPort = 8888;  // Порт для приема данных о�
 // UDP лог на смартфон (отправка при смене uTurn / hydLift / geoStop)
 WiFiUDP logUdp;
 const unsigned int LOG_UDP_PORT = 5555;   // Порт приёма на смартфоне
-IPAddress broadcastIP(192, 168, 4, 255);  // Broadcast в сети AP
+IPAddress broadcastIP(192, 168, 66, 255);  // Broadcast в сети MaixCam AP
 uint8_t logPrev_uTurn   = 255; // 255 = не отправлялось, гарантирует первую отправку
 uint8_t logPrev_hydLift = 255;
 uint8_t logPrev_geoStop = 255;
@@ -61,8 +61,8 @@ uint8_t  obsGasPwm       = 0;    // текущий ПВМ плавного по�
 unsigned long lastAngleSend = 0;
 const unsigned long angleSendInterval = 100; // Отправка каждые 100мс
 
-// IP адрес MaixCam
-IPAddress maixcamIP(192, 168, 4, 255); // broadcast — угол получат все клиенты сети
+// IP адрес MaixCam — фиксированный, т.к. камера является точкой доступа (AP)
+IPAddress maixcamIP(192, 168, 66, 1); // MaixCam AP IP
 unsigned int maixcamPort = 8889;
 
 HardwareSerial SerialTeensy(2); // Используем Serial2
@@ -167,15 +167,23 @@ void(* resetFunc) (void) = 0;
 void setup() {
      delay(250); // время для стабилизации питания
      Serial.begin(115200);
-     // Создаем точку доступа
-     WiFi.softAP(ssid, password);    
-     IPAddress IP = WiFi.softAPIP();
-     Serial.print("Точка доступа создана: ");
+     // Подключаемся к точке доступа MaixCam (камера теперь AP)
+     WiFi.mode(WIFI_STA);
+     WiFi.begin(ssid, password);
+     Serial.print("Подключение к MaixCam AP: ");
      Serial.println(ssid);
-     Serial.print("IP адрес ESP32: ");
-     Serial.println(IP);
-     Serial.print("MAC адрес: ");
-     Serial.println(WiFi.softAPmacAddress());    
+     unsigned long wifiDeadline = millis() + 15000;
+     while (WiFi.status() != WL_CONNECTED && millis() < wifiDeadline) {
+         delay(500);
+         Serial.print(".");
+     }
+     if (WiFi.status() == WL_CONNECTED) {
+         Serial.println();
+         Serial.print("Wi-Fi подключён. IP ESP32: ");
+         Serial.println(WiFi.localIP());
+     } else {
+         Serial.println("\nWi-Fi не подключён (MaixCam AP не найдена). Работаем без UDP.");
+     }
      // Запускаем UDP сервер
      udp.begin(localPort);
      Serial.println("UDP сервер запущен на порту 8888");
@@ -596,7 +604,19 @@ void setup() {
      }
  }
  void controlMaixCam() {
-    bool wifiClientPresent = (WiFi.softAPgetStationNum() > 0);    
+    // автопереподключение к MaixCam AP при потере связи
+    if (WiFi.status() != WL_CONNECTED) {
+        static uint32_t lastReconnect = 0;
+        if (millis() - lastReconnect > 10000) {
+            lastReconnect = millis();
+            Serial.println("Wi-Fi потерян, переподключение к MaixCam AP...");
+            WiFi.disconnect();
+            WiFi.begin(ssid, password);
+        }
+        maixcamOnline = false;
+        return; // без Wi-Fi нечего делать
+    }
+
     int packetSize = udp.parsePacket(); // Приём UDP от камеры
     if (packetSize > 0) {
         char packetBuffer[255];
@@ -606,9 +626,9 @@ void setup() {
             processObstacleData(packetBuffer);
             lastMaixPacketTime = millis();
         }
-    }   
-    maixcamOnline = wifiClientPresent &&  // проверка таймаута камеры
-                    (millis() - lastMaixPacketTime <= MAIXCAM_TIMEOUT_MS);    
+    }
+    // maixcamOnline = камера шлёт пакеты и мы подключены к её AP
+    maixcamOnline = (millis() - lastMaixPacketTime <= MAIXCAM_TIMEOUT_MS);
     if (maixcamOnline && millis() - lastAngleSend >= angleSendInterval) { // отправка угла обратно в камеру
         char angleBuffer[20];
         snprintf(angleBuffer, sizeof(angleBuffer),
