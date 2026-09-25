@@ -170,25 +170,10 @@ void setup() {
      // Подключаемся к точке доступа MaixCam (камера теперь AP)
      WiFi.mode(WIFI_STA);
      WiFi.begin(ssid, password);
-     Serial.print("Подключение к MaixCam AP: ");
-     Serial.println(ssid);
-     unsigned long wifiDeadline = millis() + 15000;
-     while (WiFi.status() != WL_CONNECTED && millis() < wifiDeadline) {
-         delay(500);
-         Serial.print(".");
-     }
-     if (WiFi.status() == WL_CONNECTED) {
-         Serial.println();
-         Serial.print("Wi-Fi подключён. IP ESP32: ");
-         Serial.println(WiFi.localIP());
-     } else {
-         Serial.println("\nWi-Fi не подключён (MaixCam AP не найдена). Работаем без UDP.");
-     }
-     // Запускаем UDP сервер
+     Serial.println("WiFi STA запущен, подключится к камере когда будет готова");
+     // UDP открываем сразу — не зависит от WiFi
      udp.begin(localPort);
-     Serial.println("UDP сервер запущен на порту 8888");
      logUdp.begin(LOG_UDP_PORT);
-     Serial.println("UDP лог запущен на порту 5555");
 
      EEPROM.begin(512); // Инициализация EEPROM с размером 512 байт
      EEPROM.get(0, EEread); // read identifier
@@ -249,6 +234,18 @@ void setup() {
  }
 
  void loop() {
+
+     // Отслеживаем подключение WiFi к камере (неблокирующе)
+     static bool wifiWasConnected = false;
+     bool wifiNow = (WiFi.status() == WL_CONNECTED);
+     if (wifiNow && !wifiWasConnected) {
+         Serial.print("WiFi подключён к камере. IP ESP32: ");
+         Serial.println(WiFi.localIP());
+         wifiWasConnected = true;
+     } else if (!wifiNow && wifiWasConnected) {
+         Serial.println("WiFi отключён, ждём камеру...");
+         wifiWasConnected = false;
+     }
 
      static uint32_t lastGeoStopUpdate = millis(); // Инициализируем текущим временем
      currentTime = millis();
