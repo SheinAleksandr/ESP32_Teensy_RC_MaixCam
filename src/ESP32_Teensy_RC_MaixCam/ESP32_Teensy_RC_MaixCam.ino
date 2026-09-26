@@ -40,24 +40,30 @@ float actualSteerAngle = 0.0;  //  Используем actualSteerAngle из PG
 // Геостоп НЕ используется — на этом тракторе он глушит двигатель.
 // Остановка: газ вниз + выжать сцепление.
 // Трогание: газ вверх → отпускать сцепление на макс ПВМ (мёртвая зона)
-//           → при первом росте скорости (bite) сброс до 20% ПВМ
+//           → при первом росте скорости (bite) ПВМ сброс в 0 (актуатор замирает в точке зацепления)
 //           → нарастающая прогрессия: шаг сам увеличивается каждые 200мс → PWM=255.
 enum ObstacleClutchState : uint8_t {
     OBS_IDLE      = 0, // нормальная работа, handlePark() управляет сцеплением
     OBS_STOPPING  = 1, // выжимаем сцепление + сбрасываем газ
     OBS_STOPPED   = 2, // стоим, ждём пока камера скажет "чисто"
     OBS_GAS_UP    = 3, // поднимаем газ, ждём пока двигатель наберёт обороты
-    OBS_RELEASING = 4  // отпускаем сцепление с обратной связью по ускорению GPS
+    OBS_RELEASING = 4, // отпускаем сцепление с обратной связью по ускорению GPS
+    OBS_ABORTING  = 5  // трогание не удалось: полностью выжимаем сцепление, затем → OBS_IDLE
 };
 ObstacleClutchState obsClutchState = OBS_IDLE;
 uint32_t obsClutchTimer  = 0;    // таймер ожидания текущей фазы (до когда ждать)
 float    obsPrevGpsSpeed = 0.0f; // скорость на предыдущем шаге (для расчёта ускорения)
 bool     obsBiteDetected = false; // флаг: момент зацепления сцепления уже обнаружен
-uint8_t  obsReleasePwm   = 255;  // текущий ПВМ актуатора отпуска (PARK_DOWN)
+uint8_t  obsReleasePwm   = 255;  // текущий ПВМ актуатора отпуска (PARK_UP)
 uint8_t  obsReleaseStep  = 1;    // нарастающий шаг — сам увеличивается каждый цикл
 uint32_t obsClearTimer   = 0;    // момент когда пространство стало свободным (для 3с задержки)
 bool     obsGasRamping   = false; // флаг: идёт плавный подъём газа
 uint8_t  obsGasPwm       = 0;    // текущий ПВМ плавного подъёма газа (0→255)
+// Тайм-аут трогания: если за это время в мёртвой зоне не пойман момент зацепления
+// (скорость не пошла вверх) — трогание не удалось: выжимаем сцепление полностью (4с),
+// сбрасываем газ и выходим в OBS_IDLE (управление — пульту)
+const uint32_t OBS_BITE_TIMEOUT_MS = 6000;
+uint32_t obsBiteDeadline = 0;    // до какого момента ждём зацепления
 unsigned long lastAngleSend = 0;
 const unsigned long angleSendInterval = 100; // Отправка каждые 100мс
 
@@ -144,8 +150,8 @@ const int HYDRAULIC_POWER_UP = 32;   // Пин управления мощьно
 const int HYDRAULIC_POWER_DOWN = 33;   // Пин управления мощьностью -
 const int HYDRAULIC_LIFT_OR_UP = 25; // подьем
 const int HYDRAULIC_LOWER_OR_DOWN = 26; // вниз
-const int HYDRAULIC_PARK_UP = 21; // сцепление +
-const int HYDRAULIC_PARK_DOWN = 19; // сцепление -
+const int HYDRAULIC_PARK_UP = 21; // сцепление: ОТПУСКАНИЕ
+const int HYDRAULIC_PARK_DOWN = 19; // сцепление: ВЫЖИМАНИЕ
 
 // Определяем пины для кнопок 
 const int GAS_UP_PIN = 35;    // Газ +  поддянуть 10 ком к 3,3в
@@ -491,16 +497,16 @@ void setup() {
      // Если активен автомат по препятствию — он управляет сцеплением, не вмешиваемся
      if (obsClutchState != OBS_IDLE) return;
      if (channel4Value > 1600) {
-         // Плавное выжимание сцепления (пропорционально значению channel4Value)
+         // Плавное отпускание сцепления (пропорционально значению channel4Value)
          int pwmValue = map(channel4Value, 1600, 2100, 0, 255); // Преобразуем значение в диапазон 0–255
-         analogWrite(HYDRAULIC_PARK_UP, pwmValue); // Плавное выжимание
-         analogWrite(HYDRAULIC_PARK_DOWN, 0); // Отключаем отпускание
+         analogWrite(HYDRAULIC_PARK_UP, pwmValue); // Плавное отпускание
+         analogWrite(HYDRAULIC_PARK_DOWN, 0); // Отключаем выжимание
          }
          else if (crsf.isLinkUp() && channel4Value < 1400) { // Проверяем, есть ли связь и значение канала меньше 1400 
-             // Плавное отпускание сцепления (пропорционально значению channel4Value)
+             // Плавное выжимание сцепления (пропорционально значению channel4Value)
              int pwmValue = map(channel4Value, 1400, 1000, 0, 255); // Преобразуем значение в диапазон 0–255
-             analogWrite(HYDRAULIC_PARK_DOWN, pwmValue); // Плавное отпускание
-             analogWrite(HYDRAULIC_PARK_UP, 0); // Отключаем выжимание
+             analogWrite(HYDRAULIC_PARK_DOWN, pwmValue); // Плавное выжимание
+             analogWrite(HYDRAULIC_PARK_UP, 0); // Отключаем отпускание
              }
              else {
              // Оставляем сцепление в текущем состоянии
@@ -678,6 +684,11 @@ void setup() {
     if (now - lastObsTime < 200) return;
     lastObsTime = now;
 
+    // Камера пропала (нет пакетов > MAIXCAM_TIMEOUT_MS: отключено питание, зависла,
+    // выключена детекция) — obstacleDetected устарел, считаем что путь НЕ свободен.
+    // Иначе трактор мог бы тронуться вслепую по последнему пакету "чисто".
+    bool obsBlocked = obstacleDetected || !maixcamOnline;
+
     switch (obsClutchState) {
 
         case OBS_STOPPING:
@@ -691,8 +702,8 @@ void setup() {
             break;
 
         case OBS_STOPPED:
-            // Трактор стоит, сцепление выжато — ждём 3с непрерывно свободного пространства           
-            if (obstacleDetected) {
+            // Трактор стоит, сцепление выжато — ждём 3с непрерывно свободного пространства
+            if (obsBlocked) {
                 // Препятствие снова появилось — сбрасываем счётчик чистого времени
                 obsClearTimer = 0;
             } else {
@@ -704,8 +715,9 @@ void setup() {
                     obsClearTimer   = 0;
                     obsPrevGpsSpeed = gpsSpeed;
                     obsBiteDetected = false;
-                    obsReleasePwm   = 128; // мёртвая зона 
+                    obsReleasePwm   = 128; // мёртвая зона
                     obsReleaseStep  = 1;
+                    obsBiteDeadline = now + OBS_BITE_TIMEOUT_MS;
                     obsClutchState  = OBS_RELEASING;
                 }
             }
@@ -716,8 +728,8 @@ void setup() {
             break;
 
         case OBS_RELEASING: {
-            // Если препятствие вернулось — немедленно выжать сцепление, сбросить газ и рамп
-            if (obstacleDetected) {
+            // Если препятствие вернулось или камера пропала — немедленно выжать сцепление, сбросить газ и рамп
+            if (obsBlocked) {
                 obsGasRamping  = false;
                 obsGasPwm      = 0;
                 setGasPin(HYDRAULIC_POWER_DOWN, true);
@@ -737,19 +749,35 @@ void setup() {
 
             if (!obsBiteDetected) {
                 if (accel > 3.0f) {
-                    // Зацепление: скорость пошла вверх — запускаем плавный подъём газа и сброс ПВМ до 20%
+                    // Зацепление: скорость пошла вверх — запускаем плавный подъём газа и сброс ПВМ сцепления в 0
                     obsBiteDetected = true;
                     obsGasRamping   = true; // включаем плавный подъём
-                    obsReleasePwm   = 51;   // 51/255 ≈ 20%
+                    obsReleasePwm   = 0;    // актуатор замирает в точке зацепления, дальше плавно с нуля
                     obsReleaseStep  = 1;    // сбрасываем шаг прогрессии сцепления
                     obsGasPwm       = 51;    // газ стартует                     
+                } else if (now >= obsBiteDeadline) {
+                    // Тайм-аут: за OBS_BITE_TIMEOUT_MS зацепление не поймано — трогание не удалось.
+                    // Выжимаем сцепление полностью и сбрасываем газ (как при остановке),
+                    // через 4с хода актуатора → OBS_IDLE (см. OBS_ABORTING)
+                    obsGasRamping  = false;
+                    obsGasPwm      = 0;
+                    setGasPin(HYDRAULIC_POWER_DOWN, true);
+                    powerdownTimer = now + (hydConfig.user1 * 300UL);
+                    analogWrite(HYDRAULIC_POWER_UP,   0);
+                    analogWrite(HYDRAULIC_PARK_DOWN, 255);
+                    analogWrite(HYDRAULIC_PARK_UP,     0);
+                    obsClutchTimer = now + 4000;
+                    obsClutchState = OBS_ABORTING;
+                    sendObsLog("bite_timeout");
+                    Serial.println("Трогание не удалось: нет зацепления за тайм-аут → выжимаем сцепление");
+                    break;
                 } else {
-                    // Мёртвая зона: сцепление ещё не работает 
+                    // Мёртвая зона: сцепление ещё не работает
                     obsReleasePwm = 128;
                 }
             } else {
                 // Прогрессия после зацепления:
-                // obsReleaseStep сам растёт каждый цикл → ПВМ нарастает по параболе (~4 сек до 255)
+                // obsReleaseStep сам растёт каждый цикл → ПВМ нарастает по параболе (с 0: ~4,6 сек до 255)
                 int16_t next = (int16_t)obsReleasePwm + obsReleaseStep;
                 obsReleaseStep++;
                 if (next >= 255) {
@@ -778,6 +806,19 @@ void setup() {
             analogWrite(HYDRAULIC_PARK_DOWN,   0);
             break;
         }
+
+        case OBS_ABORTING:
+            // Трогание не удалось: держим сцепление выжатым до конца хода актуатора,
+            // затем снимаем сигнал и отдаём управление пульту (handlePark снова активен)
+            analogWrite(HYDRAULIC_PARK_DOWN, 255);
+            analogWrite(HYDRAULIC_PARK_UP,     0);
+            if (now >= obsClutchTimer) {
+                analogWrite(HYDRAULIC_PARK_DOWN, 0);
+                obsClutchState = OBS_IDLE;
+                sendObsLog("abort_idle");
+                Serial.println("Сцепление выжато, автомат в OBS_IDLE — управление пульту");
+            }
+            break;
 
         default:
             break;
@@ -848,6 +889,18 @@ void setup() {
      snprintf(buf, sizeof(buf),
               "%02lu.%03lu {\"uTurn\":%u,\"hydLift\":%u,\"geoStop\":%u}",
               ms / 1000, ms % 1000, uTurn, hydLift, geoStop);
+     logUdp.beginPacket(broadcastIP, LOG_UDP_PORT);
+     logUdp.write((uint8_t*)buf, strlen(buf));
+     logUdp.endPacket();
+ }
+
+ // Событие автомата сцепления по препятствию → лог на смартфон (тот же порт 5555)
+ void sendObsLog(const char* event) {
+     char buf[96];
+     uint32_t ms = millis() % 60000;
+     snprintf(buf, sizeof(buf),
+              "%02lu.%03lu {\"obs\":\"%s\",\"cam\":%u,\"speed\":%.1f}",
+              ms / 1000, ms % 1000, event, maixcamOnline ? 1 : 0, gpsSpeed * 0.1f);
      logUdp.beginPacket(broadcastIP, LOG_UDP_PORT);
      logUdp.write((uint8_t*)buf, strlen(buf));
      logUdp.endPacket();
