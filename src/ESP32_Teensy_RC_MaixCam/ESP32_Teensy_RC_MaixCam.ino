@@ -711,11 +711,15 @@ void setup() {
                     // Пространство только что освободилось — запускаем отсчёт 3с
                     obsClearTimer = now + 3000;
                 } else if (now >= obsClearTimer) {
-                    // 3 секунды чисто — начинаем отпускать сцепление (газ пока не трогаем)
+                    // 3 секунды чисто — начинаем отпускать сцепление (газ подкидываем)
                     obsClearTimer   = 0;
+                    powerdownTimer  = 0;
+                    setGasPin(HYDRAULIC_POWER_DOWN, false);
+                    setGasPin(HYDRAULIC_POWER_UP,   true);
+                    powerupTimer    = millis() + (hydConfig.user1 * 200);
                     obsPrevGpsSpeed = gpsSpeed;
                     obsBiteDetected = false;
-                    obsReleasePwm   = 128; // мёртвая зона
+                    obsReleasePwm   = 90; // мёртвая зона
                     obsReleaseStep  = 1;
                     obsBiteDeadline = now + OBS_BITE_TIMEOUT_MS;
                     obsClutchState  = OBS_RELEASING;
@@ -732,6 +736,8 @@ void setup() {
             if (obsBlocked) {
                 obsGasRamping  = false;
                 obsGasPwm      = 0;
+                powerupTimer   = 0;                        // ← отменить подброс
+                setGasPin(HYDRAULIC_POWER_UP, false);      // ← снять газ+
                 setGasPin(HYDRAULIC_POWER_DOWN, true);
                 powerdownTimer = now + (hydConfig.user1 * 300UL);
                 analogWrite(HYDRAULIC_PARK_DOWN, 255);
@@ -773,7 +779,7 @@ void setup() {
                     break;
                 } else {
                     // Мёртвая зона: сцепление ещё не работает
-                    obsReleasePwm = 128;
+                    obsReleasePwm = 90;
                 }
             } else {
                 // Прогрессия после зацепления:
@@ -785,7 +791,7 @@ void setup() {
                     analogWrite(HYDRAULIC_PARK_DOWN, 0);
                     analogWrite(HYDRAULIC_PARK_UP,   0);
                     obsBiteDetected = false;
-                    obsGasRamping   = false;
+                    obsGasRamping   = false;                    
                     obsClutchState  = OBS_IDLE;
                     break;
                 }
