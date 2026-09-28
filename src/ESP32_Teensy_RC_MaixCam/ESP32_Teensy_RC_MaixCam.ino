@@ -48,7 +48,8 @@ enum ObstacleClutchState : uint8_t {
     OBS_STOPPED   = 2, // стоим, ждём пока камера скажет "чисто"
     OBS_GAS_UP    = 3, // поднимаем газ, ждём пока двигатель наберёт обороты
     OBS_RELEASING = 4, // отпускаем сцепление с обратной связью по ускорению GPS
-    OBS_ABORTING  = 5  // трогание не удалось: полностью выжимаем сцепление, затем → OBS_IDLE
+    OBS_ABORTING  = 5, // трогание не удалось: полностью выжимаем сцепление, затем → OBS_IDLE
+    OBS_FULL_RELEASE = 6 // парабола закончена: дожимаем отпускание сцепления до упора, затем → OBS_IDLE
 };
 ObstacleClutchState obsClutchState = OBS_IDLE;
 uint32_t obsClutchTimer  = 0;    // таймер ожидания текущей фазы (до когда ждать)
@@ -64,6 +65,9 @@ uint8_t  obsGasPwm       = 0;    // текущий ПВМ плавного по�
 // сбрасываем газ и выходим в OBS_IDLE (управление — пульту)
 const uint32_t OBS_BITE_TIMEOUT_MS = 6000;
 uint32_t obsBiteDeadline = 0;    // до какого момента ждём зацепления
+// Подход к точке зацепления по таймеру: актуатор отпускает сцепление user4*100 мс и замирает
+// (считаем, что дошли до точки схватывания). user4 = 0 — по-старому, только по GPS.
+uint32_t obsApproachEnd  = 0;    // момент окончания подхода по таймеру user4
 unsigned long lastAngleSend = 0;
 const unsigned long angleSendInterval = 100; // Отправка каждые 100мс
 
@@ -678,9 +682,22 @@ void setup() {
  void handleObstacleClutch() {
     if (obsClutchState == OBS_IDLE) return;
 
+    uint32_t now = millis();
+
+    // Точная остановка по таймеру user4 — проверяется в каждом проходе loop, а не раз в 200 мс
+    if (obsClutchState == OBS_RELEASING && !obsBiteDetected &&
+        hydConfig.user4 > 0 && now >= obsApproachEnd) {
+        analogWrite(HYDRAULIC_PARK_UP, 0);   // актуатор замирает сразу в точке зацепления
+        obsBiteDetected = true;
+        obsGasRamping   = true;              // дальше — как при зацеплении по GPS
+        obsReleasePwm   = 0;
+        obsReleaseStep  = 1;
+        obsGasPwm       = 51;
+        sendObsLog("bite_timer");
+    }
+
     // Работаем строго раз в 200мс — синхронно с обновлением gpsSpeed
     static uint32_t lastObsTime = 0;
-    uint32_t now = millis();
     if (now - lastObsTime < 200) return;
     lastObsTime = now;
 
@@ -721,7 +738,8 @@ void setup() {
                     obsBiteDetected = false;
                     obsReleasePwm   = 90; // мёртвая зона
                     obsReleaseStep  = 1;
-                    obsBiteDeadline = now + OBS_BITE_TIMEOUT_MS;
+                    obsApproachEnd  = now + (hydConfig.user4 * 100UL);
+                    obsBiteDeadline = obsApproachEnd + OBS_BITE_TIMEOUT_MS;
                     obsClutchState  = OBS_RELEASING;
                 }
             }
@@ -755,6 +773,7 @@ void setup() {
 
             if (!obsBiteDetected) {
                 if (accel > 3.0f) {
+                    sendObsLog("bite_gps");
                     // Зацепление: скорость пошла вверх — запускаем плавный подъём газа и сброс ПВМ сцепления в 0
                     obsBiteDetected = true;
                     obsGasRamping   = true; // включаем плавный подъём
@@ -787,12 +806,13 @@ void setup() {
                 int16_t next = (int16_t)obsReleasePwm + obsReleaseStep;
                 obsReleaseStep++;
                 if (next >= 255) {
-                    // Сцепление полностью отпущено — выключаем актуатор и завершаем
+                    // Парабола закончена — дожимаем отпускание до упора на полной скорости
                     analogWrite(HYDRAULIC_PARK_DOWN, 0);
-                    analogWrite(HYDRAULIC_PARK_UP,   0);
+                    analogWrite(HYDRAULIC_PARK_UP,   255);
                     obsBiteDetected = false;
-                    obsGasRamping   = false;                    
-                    obsClutchState  = OBS_IDLE;
+                    obsGasRamping   = false;
+                    obsClutchTimer  = now + 2000;      // время дожима до упора
+                    obsClutchState  = OBS_FULL_RELEASE;
                     break;
                 }
                 obsReleasePwm = (uint8_t)next;
@@ -812,6 +832,29 @@ void setup() {
             analogWrite(HYDRAULIC_PARK_DOWN,   0);
             break;
         }
+
+        case OBS_FULL_RELEASE:
+            // Препятствие во время дожима — обратно в остановку
+            if (obsBlocked) {
+                powerupTimer = 0;
+                setGasPin(HYDRAULIC_POWER_UP, false);
+                setGasPin(HYDRAULIC_POWER_DOWN, true);
+                powerdownTimer = now + (hydConfig.user1 * 300UL);
+                analogWrite(HYDRAULIC_PARK_UP, 0);
+                analogWrite(HYDRAULIC_PARK_DOWN, 255);
+                obsClutchTimer = now + 4000;
+                obsClutchState = OBS_STOPPING;
+                break;
+            }
+            // Держим отпускание до упора, затем снимаем сигнал → управление пульту
+            analogWrite(HYDRAULIC_PARK_UP,   255);
+            analogWrite(HYDRAULIC_PARK_DOWN, 0);
+            if (now >= obsClutchTimer) {
+                analogWrite(HYDRAULIC_PARK_UP, 0);
+                obsClutchState = OBS_IDLE;
+                sendObsLog("full_release");
+            }
+            break;
 
         case OBS_ABORTING:
             // Трогание не удалось: держим сцепление выжатым до конца хода актуатора,
