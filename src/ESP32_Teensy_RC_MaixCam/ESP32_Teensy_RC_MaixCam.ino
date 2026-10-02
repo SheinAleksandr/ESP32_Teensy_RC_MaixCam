@@ -668,9 +668,9 @@ void setup() {
                 // Выжимаем сцепление на максимум
                 analogWrite(HYDRAULIC_PARK_DOWN, 255);
                 analogWrite(HYDRAULIC_PARK_UP, 0);
-                // Сбрасываем газ
-                setGasPin(HYDRAULIC_POWER_DOWN, true);
-                powerdownTimer = millis() + (hydConfig.user1 * 300UL);
+                // Сбрасываем газ сразу, но плавнее — ПВМ 120 вместо полного
+                analogWrite(HYDRAULIC_POWER_DOWN, 120);
+                powerdownTimer = millis() + (hydConfig.user1 * 500UL);
                 // Ждём 4с полного хода актуатора сцепления, затем → OBS_STOPPED
                 obsClutchTimer = millis() + 4000;
                 obsClutchState = OBS_STOPPING;
@@ -692,7 +692,7 @@ void setup() {
         obsGasRamping   = true;              // дальше — как при зацеплении по GPS
         obsReleasePwm   = 0;
         obsReleaseStep  = 1;
-        obsGasPwm       = 0;
+        obsGasPwm       = 50;
     }
 
     // Работаем строго раз в 200мс — синхронно с обновлением gpsSpeed
@@ -777,7 +777,7 @@ void setup() {
                     obsGasRamping   = true; // включаем плавный подъём
                     obsReleasePwm   = 0;    // актуатор замирает в точке зацепления, дальше плавно с нуля
                     obsReleaseStep  = 1;    // сбрасываем шаг прогрессии сцепления
-                    obsGasPwm       = 0;    // газ стартует                     
+                    obsGasPwm       = 50;    // газ стартует                     
                 } else if (now >= obsBiteDeadline) {
                     // Тайм-аут: за OBS_BITE_TIMEOUT_MS зацепление не поймано — трогание не удалось.
                     // Выжимаем сцепление полностью и сбрасываем газ (как при остановке),
@@ -814,9 +814,9 @@ void setup() {
                 obsReleasePwm = (uint8_t)next;
             }
 
-            // Плавный подъём газа: шаг 15 каждые 200мс → ~3 сек до максимума
+            // Плавный подъём газа: шаг 20 каждые 200мс → ~3 сек до максимума
             if (obsGasRamping) {
-                int16_t nextGas = (int16_t)obsGasPwm + 15;
+                int16_t nextGas = (int16_t)obsGasPwm + 20;
                 obsGasPwm = (nextGas >= 255) ? 255 : (uint8_t)nextGas;
                 analogWrite(HYDRAULIC_POWER_UP,   obsGasPwm);
                 analogWrite(HYDRAULIC_POWER_DOWN, 0);
